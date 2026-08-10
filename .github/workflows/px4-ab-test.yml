@@ -2,15 +2,8 @@ name: PX4 v1.17 Lee A-B SITL
 
 on:
   workflow_dispatch:
-  push:
+  pull_request:
     branches: [main]
-    paths:
-      - 'ros2_ws/**'
-      - 'scripts/**'
-      - 'codex/**'
-      - 'CODEX_TASK.md'
-      - 'AGENTS.md'
-      - '.github/workflows/px4-ab-test.yml'
 
 permissions:
   contents: read
