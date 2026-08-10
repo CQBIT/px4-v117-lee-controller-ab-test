@@ -1,0 +1,123 @@
+name: PX4 v1.17 Lee A-B SITL
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'ros2_ws/**'
+      - 'scripts/**'
+      - 'codex/**'
+      - 'CODEX_TASK.md'
+      - 'AGENTS.md'
+      - '.github/workflows/px4-ab-test.yml'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: px4-v117-lee-ab-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ab-test:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      ROS_LOCALHOST_ONLY: '1'
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+
+    steps:
+      - name: Checkout experiment repository
+        uses: actions/checkout@v4
+
+      - name: Show runner information
+        run: |
+          set -euxo pipefail
+          uname -a
+          cat /etc/os-release
+          df -h
+          free -h
+          nproc
+
+      - name: Install ROS2, PX4 v1.17, Gazebo and XRCE-DDS
+        id: setup
+        run: |
+          set -euxo pipefail
+          bash codex/setup_environment.sh
+
+      - name: Verify built environment
+        id: preflight
+        run: |
+          set -euxo pipefail
+          source codex/runtime_env.sh
+          source "/opt/ros/${ROS_DISTRO}/setup.bash"
+          source ros2_ws/install/setup.bash
+          test -x "${PX4_DIR}/build/px4_sitl_default/bin/px4"
+          test -x "${XRCE_BIN}"
+          ros2 pkg executables lee_ab_controller
+          "${XRCE_BIN}" --help >/dev/null 2>&1 || true
+          "${PX4_DIR}/build/px4_sitl_default/bin/px4" --help >/dev/null 2>&1 || true
+
+      - name: Run paired Lee torque vs PX4 body-rate SITL suite
+        id: suite
+        run: |
+          set -euxo pipefail
+          bash scripts/run_suite_native.sh
+
+      - name: Re-run analysis on any available cases
+        id: analysis
+        if: always()
+        run: |
+          mkdir -p results
+          python3 scripts/analyze_results.py --root results || true
+          echo '--- result files ---'
+          find results -maxdepth 2 -type f -printf '%p %s bytes\n' | sort || true
+          if [[ -f results/summary.csv ]]; then
+            echo '--- summary.csv ---'
+            cat results/summary.csv
+          fi
+
+      - name: Upload PX4 logs, CSV data and plots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: px4-v117-lee-ab-results-${{ github.run_number }}
+          path: |
+            results/
+            codex/runtime_env.sh
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Publish run status as GitHub issue
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## PX4 v1.17 Lee A/B cloud run"
+            echo
+            echo "- Run: [${GITHUB_RUN_ID}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})"
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- Runner: Ubuntu 22.04 / ROS 2 Humble"
+            echo "- setup: \`${{ steps.setup.outcome }}\`"
+            echo "- preflight: \`${{ steps.preflight.outcome }}\`"
+            echo "- suite: \`${{ steps.suite.outcome }}\`"
+            echo "- analysis: \`${{ steps.analysis.outcome }}\`"
+            echo
+            if [[ -s results/summary.csv ]]; then
+              echo '### summary.csv'
+              echo '```csv'
+              cat results/summary.csv
+              echo '```'
+            else
+              echo 'No complete summary.csv was produced. Inspect the Actions job log and uploaded partial artifact.'
+            fi
+          } > /tmp/run_issue.md
+          gh issue create \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "PX4 A/B cloud run #${GITHUB_RUN_NUMBER}" \
+            --body-file /tmp/run_issue.md
