@@ -1,7 +1,6 @@
 ---
 name: px4-ci-doctor
 description: Diagnoses and repairs PX4 v1.17 + Gazebo x500 + ROS 2 CI/SITL failures until the Lee direct-torque vs PX4 body-rate A/B experiment produces valid reproducible results.
-target: github-copilot
 tools: ["read", "search", "edit", "execute"]
 ---
 
