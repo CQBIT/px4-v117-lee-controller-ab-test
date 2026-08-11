@@ -1,0 +1,39 @@
+name: PX4 Workflow Observer
+
+on:
+  workflow_run:
+    workflows:
+      - 'PX4 A-B AI Repair Loop'
+      - 'PX4 v1.17 Lee A-B SITL'
+    types: [completed]
+
+permissions:
+  actions: read
+  issues: write
+  contents: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TRACKING_ISSUE: '5'
+    steps:
+      - name: Record completed workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/observer.md <<EOF
+          ### Workflow completed: ${{ github.event.workflow_run.name }}
+
+          - run ID: \`${{ github.event.workflow_run.id }}\`
+          - status: \`${{ github.event.workflow_run.status }}\`
+          - conclusion: \`${{ github.event.workflow_run.conclusion }}\`
+          - event: \`${{ github.event.workflow_run.event }}\`
+          - head branch: \`${{ github.event.workflow_run.head_branch }}\`
+          - head SHA: \`${{ github.event.workflow_run.head_sha }}\`
+          - run: ${{ github.event.workflow_run.html_url }}
+          - recorded at: \`$(date -u --iso-8601=seconds)\`
+          EOF
+          gh issue comment "${TRACKING_ISSUE}" --repo "${GITHUB_REPOSITORY}" --body-file /tmp/observer.md
