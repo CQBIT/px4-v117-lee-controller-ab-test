@@ -5,8 +5,8 @@ SCENARIO=${2:?hover|circle|figure8|aggressive}
 DURATION=${3:-25}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 source "$ROOT/codex/runtime_env.sh"
-source "/opt/ros/${ROS_DISTRO}/setup.bash"
-source "$ROOT/ros2_ws/install/setup.bash"
+source_ros
+source_lee_ws
 RUN_DIR="$ROOT/results/${SCENARIO}_${MODE}"
 rm -rf "$RUN_DIR"
 mkdir -p "$RUN_DIR"
