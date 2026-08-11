@@ -101,7 +101,7 @@ jobs:
               echo 'The latest PX4 workflow finished with GitHub conclusion=success, but the experiment is incomplete.'
               echo "summary_rows=${ROWS} (need at least 8 paired-case rows)"
               echo "RESULTS.md=${REPORT:-missing}"
-              echo 'Inspect the workflow, suite, analyzer, and artifacts and repair the experiment so the required final outputs are generated.'
+              echo 'Inspect the suite, analyzer, report generation, and artifacts and repair the experiment.'
             } > /tmp/px4-ai/failure-context.txt
             echo 'needs_repair=true' >> "$GITHUB_OUTPUT"
             echo 'reason=incomplete-success' >> "$GITHUB_OUTPUT"
@@ -167,6 +167,8 @@ jobs:
           Before direct-torque results can be accepted, the SI N*m -> PX4 normalized FRD torque mapping must be derived or experimentally calibrated against the actual PX4 v1.17 x500 actuator effectiveness/control allocator and Gazebo motor model and documented in RESULTS.md.
 
           You may edit files and run lightweight syntax/static checks here. Do NOT launch the full long PX4/Gazebo suite inside this AI repair job; the dedicated PX4 workflow will run it after your patch is committed. Do not commit or push; the enclosing workflow handles that.
+
+          Important permission boundary: prefer fixing ordinary source/config/shell files. If a fix truly requires editing `.github/workflows/*`, you may make that edit for analysis, but the enclosing job will capture its diff and revert it before the bot commit because GITHUB_TOKEN cannot push workflow-file changes. Clearly explain every required workflow change in your final summary so the external GitHub connector can apply it.
           PROMPT
 
           echo "Repair reason: ${REPAIR_REASON}"
@@ -195,31 +197,54 @@ jobs:
           PY
           fi
 
-      - name: Commit repair and trigger next PX4 run
+      - name: Prepare safe bot commit
         if: steps.inspect.outputs.needs_repair == 'true'
+        id: prepare
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/px4-ai
+          echo 'workflow_patch=false' >> "$GITHUB_OUTPUT"
+
+          # The Actions GITHUB_TOKEN cannot push changes to workflow files.
+          # Preserve any proposed workflow fix for the external repair agent,
+          # then restore those files before making the bot commit.
+          if ! git diff --quiet -- .github/workflows; then
+            git diff -- .github/workflows > /tmp/px4-ai/workflow.patch
+            echo 'workflow_patch=true' >> "$GITHUB_OUTPUT"
+            git restore -- .github/workflows
+          fi
+
+          # The custom agent profile is injected only for this repair session.
+          # Keep the canonical copy on main rather than polluting the test branch.
+          rm -f .github/agents/px4-ci-doctor.md
+          rmdir .github/agents 2>/dev/null || true
+
+          # Static validation must not create bytecode in commits.
+          find . -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
+          find . -type f -name '*.pyc' -delete 2>/dev/null || true
+
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'has_commit=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'has_commit=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit repair and trigger next PX4 run
+        if: steps.inspect.outputs.needs_repair == 'true' && steps.prepare.outputs.has_commit == 'true'
         id: commit
         shell: bash
         run: |
           set -euo pipefail
-
-          # Keep the reusable custom-agent profile on the active test branch too.
-          git add -A
-
-          if git diff --cached --quiet; then
-            echo 'changed=false' >> "$GITHUB_OUTPUT"
-            echo 'Copilot made no repository change. Re-dispatch the PX4 workflow once to distinguish transient failure from a persistent one.'
-            gh workflow run "${TARGET_WORKFLOW}" --repo "${GITHUB_REPOSITORY}" --ref "${TARGET_BRANCH}"
-            exit 0
-          fi
-
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m "ci: autonomous PX4 repair (${{ steps.inspect.outputs.reason }})"
           git push origin "HEAD:${TARGET_BRANCH}"
           echo 'changed=true' >> "$GITHUB_OUTPUT"
 
-          # GITHUB_TOKEN pushes do not reliably fan out into another workflow;
-          # explicitly dispatch the firmware-level test on the repaired branch.
+          # Explicit dispatch is used because pushes made with GITHUB_TOKEN do
+          # not reliably trigger a second workflow chain.
           gh workflow run "${TARGET_WORKFLOW}" --repo "${GITHUB_REPOSITORY}" --ref "${TARGET_BRANCH}"
 
       - name: Record repair action on tracking issue
@@ -232,9 +257,20 @@ jobs:
             echo
             echo "- reason: \`${{ steps.inspect.outputs.reason }}\`"
             echo "- inspected run: ${{ steps.inspect.outputs.latest_url }}"
-            echo "- repository changes committed: \`${{ steps.commit.outputs.changed || 'unknown' }}\`"
+            echo "- ordinary repository patch available: \`${{ steps.prepare.outputs.has_commit || 'unknown' }}\`"
+            echo "- ordinary repository patch pushed: \`${{ steps.commit.outputs.changed || 'false' }}\`"
+            echo "- workflow-level patch requires external connector: \`${{ steps.prepare.outputs.workflow_patch || 'false' }}\`"
             echo "- repair workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
             echo
+            if [[ -s /tmp/px4-ai/workflow.patch ]]; then
+              echo '<details><summary>Workflow patch requiring external connector</summary>'
+              echo
+              echo '```diff'
+              cat /tmp/px4-ai/workflow.patch
+              echo '```'
+              echo '</details>'
+              echo
+            fi
             if [[ -s /tmp/px4-ai/copilot-output.txt ]]; then
               echo '<details><summary>Copilot repair summary</summary>'
               echo
