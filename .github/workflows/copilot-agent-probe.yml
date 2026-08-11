@@ -1,0 +1,59 @@
+name: Copilot Agent Availability Probe
+
+on:
+  push:
+    paths:
+      - '.github/workflows/copilot-agent-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  copilot-requests: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install latest GitHub Copilot CLI
+        run: npm install -g @github/copilot
+
+      - name: Probe Copilot request using GITHUB_TOKEN
+        id: probe
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set +e
+          copilot --yolo -p 'Reply with exactly COPILOT_OK and nothing else.' > /tmp/copilot-probe.log 2>&1
+          code=$?
+          echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
+          echo "--- Copilot probe output ---"
+          cat /tmp/copilot-probe.log
+          exit 0
+
+      - name: Publish probe result
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROBE_EXIT: ${{ steps.probe.outputs.exit_code }}
+        shell: bash
+        run: |
+          {
+            echo '## GitHub Copilot automation probe'
+            echo
+            echo "- exit code: \`${PROBE_EXIT:-unknown}\`"
+            echo "- run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo
+            echo '```text'
+            tail -n 80 /tmp/copilot-probe.log 2>/dev/null || true
+            echo '```'
+          } > /tmp/copilot-probe-issue.md
+
+          gh issue create \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "Copilot automation probe: exit ${PROBE_EXIT:-unknown}" \
+            --body-file /tmp/copilot-probe-issue.md
