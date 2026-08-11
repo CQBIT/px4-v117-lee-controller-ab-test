@@ -39,15 +39,23 @@ rm -rf "$PX4_DIR/build/px4_sitl_default/rootfs/log" || true
 PX4_PID=$!
 
 READY=0
-for i in $(seq 1 90); do
+for i in $(seq 1 120); do
+  # Check if the topic exists
   if timeout 2s ros2 topic list 2>/dev/null | grep -q '/fmu/out/vehicle_odometry'; then
-    READY=1; break
+    # Topic exists, try to receive one message with timeout
+    if timeout 3s ros2 topic echo /fmu/out/vehicle_odometry --once 2>/dev/null | grep -q 'frame_id'; then
+      echo "Received vehicle_odometry data, PX4 ready"
+      READY=1
+      break
+    fi
   fi
   sleep 1
 done
 if [[ $READY -ne 1 ]]; then
-  echo "PX4 DDS topic did not appear" >&2
+  echo "PX4 did not produce vehicle_odometry data within 120 seconds" >&2
   tail -n 200 "$RUN_DIR/px4_gz.log" >&2 || true
+  echo "---" >&2
+  timeout 2s ros2 topic list 2>/dev/null | grep -i odometry || echo "No odometry topics found" >&2
   exit 20
 fi
 

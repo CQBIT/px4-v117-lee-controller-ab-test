@@ -250,11 +250,12 @@ private:
     prev_time_ = now;
 
     // PX4 requires >1 s offboard proof-of-life before mode switch.
-    if (!offboard_commanded_ && t > 1.2) {
+    // In SITL, give more time for EKF2 to stabilize with sensor data.
+    if (!offboard_commanded_ && t > 3.0) {
       command(VehicleCommand::VEHICLE_CMD_DO_SET_MODE, 1.f, 6.f);
       offboard_commanded_ = true;
     }
-    if (!arm_commanded_ && t > 1.5) {
+    if (!arm_commanded_ && t > 4.0) {
       // param2=21196 requests force-arm; used here only in SITL CI.
       command(VehicleCommand::VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.f, 21196.f);
       arm_commanded_ = true;
