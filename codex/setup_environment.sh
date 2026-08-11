@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Native Codex Cloud setup for PX4 v1.17 + Gazebo x500 + ROS 2.
+# Native cloud setup for PX4 v1.17 + Gazebo x500 + ROS 2.
 # Supports Ubuntu 22.04 (ROS 2 Humble) and Ubuntu 24.04 (ROS 2 Jazzy).
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -67,18 +67,46 @@ sudo ldconfig
 cd "${PX4_DIR}"
 make -j"$(nproc)" px4_sitl_default
 
+# ROS setup scripts are not guaranteed to be nounset-safe. Temporarily disable
+# `set -u` while sourcing them, then restore strict mode for our own script.
+set +u
 source "/opt/ros/${ROS_DISTRO}/setup.bash"
+set -u
 cd "${ROOT}/ros2_ws"
 colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
 
 python3 -m pip install --user --break-system-packages numpy pandas matplotlib pyulog || \
 python3 -m pip install --user numpy pandas matplotlib pyulog
 
+# Generate a reusable environment helper. Setup-time paths/distros are expanded
+# here; function-local variables are escaped so they are evaluated when sourced.
 cat > "${ROOT}/codex/runtime_env.sh" <<ENVEOF
 export ROS_DISTRO=${ROS_DISTRO}
 export PX4_DIR=${PX4_DIR}
+export LEE_AB_ROOT=${ROOT}
 export XRCE_BIN=/usr/local/bin/MicroXRCEAgent
 export HEADLESS=1
+
+source_no_unset() {
+  local setup_file="\$1"
+  local restore_u=0
+  case "\$-" in
+    *u*) restore_u=1; set +u ;;
+  esac
+  # shellcheck disable=SC1090
+  source "\$setup_file"
+  if [[ "\$restore_u" -eq 1 ]]; then
+    set -u
+  fi
+}
+
+source_ros() {
+  source_no_unset "/opt/ros/\${ROS_DISTRO}/setup.bash"
+}
+
+source_lee_ws() {
+  source_no_unset "\${LEE_AB_ROOT}/ros2_ws/install/setup.bash"
+}
 ENVEOF
 
 echo "[codex-setup] complete"
