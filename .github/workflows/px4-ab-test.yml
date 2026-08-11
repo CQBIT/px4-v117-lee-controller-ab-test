@@ -46,8 +46,8 @@ jobs:
         run: |
           set -euxo pipefail
           source codex/runtime_env.sh
-          source "/opt/ros/${ROS_DISTRO}/setup.bash"
-          source ros2_ws/install/setup.bash
+          source_ros
+          source_lee_ws
           test -x "${PX4_DIR}/build/px4_sitl_default/bin/px4"
           test -x "${XRCE_BIN}"
           ros2 pkg executables lee_ab_controller
