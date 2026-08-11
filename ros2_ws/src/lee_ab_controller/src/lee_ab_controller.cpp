@@ -138,7 +138,7 @@ private:
     return Eigen::Vector3d(v[0], v[1], v[2]);
   }
 
-  uint64_t timestamp_us() const {
+  uint64_t timestamp_us() {
     return static_cast<uint64_t>(get_clock()->now().nanoseconds() / 1000ULL);
   }
 
