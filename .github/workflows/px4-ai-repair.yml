@@ -1,0 +1,247 @@
+name: PX4 A-B AI Repair Loop
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/px4-ai-repair.yml'
+
+permissions:
+  contents: write
+  actions: write
+  issues: write
+  copilot-requests: write
+
+concurrency:
+  group: px4-ab-ai-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TARGET_BRANCH: ci/first-px4-run
+      TARGET_WORKFLOW: px4-ab-test.yml
+      TRACKING_ISSUE: '5'
+    steps:
+      - name: Checkout active PX4 test branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_BRANCH }}
+          fetch-depth: 0
+
+      - name: Load latest repository repair agent profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          mkdir -p .github/agents
+          git show origin/main:.github/agents/px4-ci-doctor.md > .github/agents/px4-ci-doctor.md
+
+      - name: Inspect latest PX4 A-B run
+        id: inspect
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/px4-ai
+
+          RUNS_JSON="$(gh run list \
+            --repo "${GITHUB_REPOSITORY}" \
+            --workflow "${TARGET_WORKFLOW}" \
+            --branch "${TARGET_BRANCH}" \
+            --limit 10 \
+            --json databaseId,status,conclusion,event,headBranch,headSha,createdAt,url)"
+          echo "${RUNS_JSON}" | tee /tmp/px4-ai/runs.json | jq .
+
+          ACTIVE_COUNT="$(echo "${RUNS_JSON}" | jq '[.[] | select(.status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "requested" or .status == "pending")] | length')"
+          if [[ "${ACTIVE_COUNT}" -gt 0 ]]; then
+            echo 'needs_repair=false' >> "$GITHUB_OUTPUT"
+            echo 'reason=active' >> "$GITHUB_OUTPUT"
+            echo 'A PX4 A-B run is already active. Do not interrupt it.'
+            exit 0
+          fi
+
+          LATEST_ID="$(echo "${RUNS_JSON}" | jq -r '.[0].databaseId // empty')"
+          LATEST_CONCLUSION="$(echo "${RUNS_JSON}" | jq -r '.[0].conclusion // "none"')"
+          LATEST_URL="$(echo "${RUNS_JSON}" | jq -r '.[0].url // ""')"
+          echo "latest_id=${LATEST_ID}" >> "$GITHUB_OUTPUT"
+          echo "latest_conclusion=${LATEST_CONCLUSION}" >> "$GITHUB_OUTPUT"
+          echo "latest_url=${LATEST_URL}" >> "$GITHUB_OUTPUT"
+
+          if [[ -z "${LATEST_ID}" ]]; then
+            echo 'needs_repair=false' >> "$GITHUB_OUTPUT"
+            echo 'reason=no-run' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "${LATEST_CONCLUSION}" == 'success' ]]; then
+            rm -rf /tmp/px4-ai/artifacts
+            mkdir -p /tmp/px4-ai/artifacts
+            gh run download "${LATEST_ID}" --repo "${GITHUB_REPOSITORY}" -D /tmp/px4-ai/artifacts || true
+
+            SUMMARY="$(find /tmp/px4-ai/artifacts -type f -name summary.csv -print -quit || true)"
+            REPORT="$(find /tmp/px4-ai/artifacts -type f -name RESULTS.md -print -quit || true)"
+            ROWS=0
+            if [[ -n "${SUMMARY}" && -s "${SUMMARY}" ]]; then
+              ROWS="$(tail -n +2 "${SUMMARY}" | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')"
+            fi
+            echo "Successful workflow artifact check: summary_rows=${ROWS}, report=${REPORT:-missing}"
+
+            if [[ "${ROWS}" -ge 8 && -n "${REPORT}" && -s "${REPORT}" ]]; then
+              echo 'needs_repair=false' >> "$GITHUB_OUTPUT"
+              echo 'reason=complete' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            {
+              echo 'The latest PX4 workflow finished with GitHub conclusion=success, but the experiment is incomplete.'
+              echo "summary_rows=${ROWS} (need at least 8 paired-case rows)"
+              echo "RESULTS.md=${REPORT:-missing}"
+              echo 'Inspect the workflow, suite, analyzer, and artifacts and repair the experiment so the required final outputs are generated.'
+            } > /tmp/px4-ai/failure-context.txt
+            echo 'needs_repair=true' >> "$GITHUB_OUTPUT"
+            echo 'reason=incomplete-success' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          set +e
+          gh run view "${LATEST_ID}" --repo "${GITHUB_REPOSITORY}" --log-failed > /tmp/px4-ai/failure-context.txt 2>&1
+          LOG_STATUS=$?
+          if [[ ${LOG_STATUS} -ne 0 || ! -s /tmp/px4-ai/failure-context.txt ]]; then
+            gh run view "${LATEST_ID}" --repo "${GITHUB_REPOSITORY}" --log > /tmp/px4-ai/failure-context.txt 2>&1 || true
+          fi
+          set -e
+          echo 'needs_repair=true' >> "$GITHUB_OUTPUT"
+          echo "reason=terminal-${LATEST_CONCLUSION}" >> "$GITHUB_OUTPUT"
+          echo '--- tail of failure context ---'
+          tail -n 160 /tmp/px4-ai/failure-context.txt || true
+
+      - name: Dispatch initial run when none exists
+        if: steps.inspect.outputs.reason == 'no-run'
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run "${TARGET_WORKFLOW}" --repo "${GITHUB_REPOSITORY}" --ref "${TARGET_BRANCH}"
+
+      - name: Mark completed experiment
+        if: steps.inspect.outputs.reason == 'complete'
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh issue close "${TRACKING_ISSUE}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --comment "Automated validator found a successful PX4 A/B run with at least 8 summary rows and a non-empty RESULTS.md. Latest run: ${{ steps.inspect.outputs.latest_url }}"
+
+      - name: Install GitHub Copilot CLI
+        if: steps.inspect.outputs.needs_repair == 'true'
+        run: npm install -g @github/copilot
+
+      - name: Run PX4 CI doctor agent
+        if: steps.inspect.outputs.needs_repair == 'true'
+        id: copilot
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+          REPAIR_REASON: ${{ steps.inspect.outputs.reason }}
+          FAILED_RUN: ${{ steps.inspect.outputs.latest_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/px4-ai/prompt.txt <<'PROMPT'
+          Work autonomously as the PX4 CI repair engineer for this repository.
+
+          Read AGENTS.md, CODEX_TASK.md, `.github/agents/px4-ci-doctor.md`, the current workflow/setup/test scripts, and `/tmp/px4-ai/failure-context.txt` before editing anything.
+
+          The only acceptable completion target is a real PX4 v1.17.0 + Gazebo gz_x500 + ROS 2 firmware-level A/B experiment comparing:
+          A) VehicleRatesSetpoint -> PX4 mc_rate_control -> control_allocator
+          B) VehicleThrustSetpoint + VehicleTorqueSetpoint -> control_allocator.
+
+          Diagnose the first causal failure in the supplied CI context. Use current official/upstream documentation or source through available network/shell tools when version/API facts need verification. Make the smallest correct repository changes that move the experiment forward. Do not weaken tests, skip required cases, fake data, replace PX4 SITL with a toy simulation, or change PX4 away from v1.17.0.
+
+          If the workflow previously succeeded but final artifacts were incomplete, repair result generation/validation so at least 8 valid scenario/controller rows, raw logs/ULogs, plots, and RESULTS.md are produced.
+
+          Before direct-torque results can be accepted, the SI N*m -> PX4 normalized FRD torque mapping must be derived or experimentally calibrated against the actual PX4 v1.17 x500 actuator effectiveness/control allocator and Gazebo motor model and documented in RESULTS.md.
+
+          You may edit files and run lightweight syntax/static checks here. Do NOT launch the full long PX4/Gazebo suite inside this AI repair job; the dedicated PX4 workflow will run it after your patch is committed. Do not commit or push; the enclosing workflow handles that.
+          PROMPT
+
+          echo "Repair reason: ${REPAIR_REASON}"
+          echo "Failed/latest run: ${FAILED_RUN}"
+          copilot --agent=px4-ci-doctor --yolo -p "$(cat /tmp/px4-ai/prompt.txt)" | tee /tmp/px4-ai/copilot-output.txt
+
+      - name: Validate agent edits
+        if: steps.inspect.outputs.needs_repair == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '--- git diff ---'
+          git status --short
+          git diff -- . ':(exclude).github/agents/px4-ci-doctor.md' || true
+
+          bash -n codex/setup_environment.sh
+          bash -n scripts/run_case_native.sh
+          bash -n scripts/run_suite_native.sh
+          python3 -m py_compile scripts/analyze_results.py
+
+          if [[ -f ros2_ws/src/lee_ab_controller/package.xml ]]; then
+            python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          ET.parse('ros2_ws/src/lee_ab_controller/package.xml')
+          print('package.xml OK')
+          PY
+          fi
+
+      - name: Commit repair and trigger next PX4 run
+        if: steps.inspect.outputs.needs_repair == 'true'
+        id: commit
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Keep the reusable custom-agent profile on the active test branch too.
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            echo 'Copilot made no repository change. Re-dispatch the PX4 workflow once to distinguish transient failure from a persistent one.'
+            gh workflow run "${TARGET_WORKFLOW}" --repo "${GITHUB_REPOSITORY}" --ref "${TARGET_BRANCH}"
+            exit 0
+          fi
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m "ci: autonomous PX4 repair (${{ steps.inspect.outputs.reason }})"
+          git push origin "HEAD:${TARGET_BRANCH}"
+          echo 'changed=true' >> "$GITHUB_OUTPUT"
+
+          # GITHUB_TOKEN pushes do not reliably fan out into another workflow;
+          # explicitly dispatch the firmware-level test on the repaired branch.
+          gh workflow run "${TARGET_WORKFLOW}" --repo "${GITHUB_REPOSITORY}" --ref "${TARGET_BRANCH}"
+
+      - name: Record repair action on tracking issue
+        if: steps.inspect.outputs.needs_repair == 'true' && always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "### Automated repair cycle $(date -u --iso-8601=seconds)"
+            echo
+            echo "- reason: \`${{ steps.inspect.outputs.reason }}\`"
+            echo "- inspected run: ${{ steps.inspect.outputs.latest_url }}"
+            echo "- repository changes committed: \`${{ steps.commit.outputs.changed || 'unknown' }}\`"
+            echo "- repair workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo
+            if [[ -s /tmp/px4-ai/copilot-output.txt ]]; then
+              echo '<details><summary>Copilot repair summary</summary>'
+              echo
+              echo '```text'
+              tail -n 120 /tmp/px4-ai/copilot-output.txt
+              echo '```'
+              echo '</details>'
+            fi
+          } > /tmp/px4-ai/issue-comment.md
+          gh issue comment "${TRACKING_ISSUE}" --repo "${GITHUB_REPOSITORY}" --body-file /tmp/px4-ai/issue-comment.md
