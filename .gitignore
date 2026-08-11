@@ -5,3 +5,5 @@ ros2_ws/src/px4_msgs/
 codex/runtime_env.sh
 results/*
 !results/.gitkeep
+__pycache__/
+*.pyc
