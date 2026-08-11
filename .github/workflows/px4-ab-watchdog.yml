@@ -1,0 +1,93 @@
+name: PX4 A-B 15min Watchdog
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: px4-ab-watchdog
+  cancel-in-progress: true
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TARGET_BRANCH: ci/first-px4-run
+      TARGET_WORKFLOW: px4-ab-test.yml
+    steps:
+      - name: Check PX4 A-B workflow and continue if stopped
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Checking ${TARGET_WORKFLOW} on ${TARGET_BRANCH} at $(date -u --iso-8601=seconds)"
+
+          RUNS_JSON="$(gh run list \
+            --repo "${GITHUB_REPOSITORY}" \
+            --workflow "${TARGET_WORKFLOW}" \
+            --branch "${TARGET_BRANCH}" \
+            --limit 10 \
+            --json databaseId,status,conclusion,event,headBranch,createdAt,url)"
+
+          echo "${RUNS_JSON}" | jq .
+
+          ACTIVE_COUNT="$(echo "${RUNS_JSON}" | jq '[.[] | select(.status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "requested" or .status == "pending")] | length')"
+          if [[ "${ACTIVE_COUNT}" -gt 0 ]]; then
+            echo "PX4 A-B CI is already active; leave it running."
+            exit 0
+          fi
+
+          LATEST_ID="$(echo "${RUNS_JSON}" | jq -r '.[0].databaseId // empty')"
+          LATEST_CONCLUSION="$(echo "${RUNS_JSON}" | jq -r '.[0].conclusion // "none"')"
+
+          if [[ -z "${LATEST_ID}" ]]; then
+            echo "No prior run found; dispatching a new run on ${TARGET_BRANCH}."
+            gh workflow run "${TARGET_WORKFLOW}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --ref "${TARGET_BRANCH}"
+            exit 0
+          fi
+
+          RUN_ATTEMPT="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${LATEST_ID}" --jq '.run_attempt // 1')"
+          echo "Latest run=${LATEST_ID}, conclusion=${LATEST_CONCLUSION}, attempt=${RUN_ATTEMPT}"
+
+          case "${LATEST_CONCLUSION}" in
+            success)
+              echo "Latest PX4 A-B run succeeded; watchdog is idle."
+              ;;
+            failure)
+              if [[ "${RUN_ATTEMPT}" -lt 2 ]]; then
+                echo "Latest run failed and has not yet been retried; rerunning failed jobs once."
+                gh run rerun "${LATEST_ID}" --failed --repo "${GITHUB_REPOSITORY}"
+              else
+                echo "Persistent failure already retried. Leave it for the intelligent repair agent instead of burning CI minutes."
+              fi
+              ;;
+            cancelled|timed_out|stale|action_required|startup_failure)
+              if [[ "${RUN_ATTEMPT}" -lt 3 ]]; then
+                echo "Run stopped abnormally; rerunning it."
+                gh run rerun "${LATEST_ID}" --repo "${GITHUB_REPOSITORY}"
+              else
+                echo "Repeated abnormal stop; leave it for intelligent repair."
+              fi
+              ;;
+            skipped|neutral)
+              echo "Non-success terminal state; dispatching a fresh run."
+              gh workflow run "${TARGET_WORKFLOW}" \
+                --repo "${GITHUB_REPOSITORY}" \
+                --ref "${TARGET_BRANCH}"
+              ;;
+            *)
+              echo "Unknown/no conclusion (${LATEST_CONCLUSION}); dispatching only if no active run exists."
+              gh workflow run "${TARGET_WORKFLOW}" \
+                --repo "${GITHUB_REPOSITORY}" \
+                --ref "${TARGET_BRANCH}"
+              ;;
+          esac
