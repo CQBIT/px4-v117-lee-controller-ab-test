@@ -19,7 +19,6 @@ jobs:
     timeout-minutes: 120
     env:
       DEBIAN_FRONTEND: noninteractive
-      ROS_LOCALHOST_ONLY: '1'
       RMW_IMPLEMENTATION: rmw_fastrtps_cpp
 
     steps:
