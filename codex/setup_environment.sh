@@ -7,12 +7,14 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . /etc/os-release
 case "${VERSION_ID}" in
-  22.04) ROS_DISTRO=humble ;;
-  24.04) ROS_DISTRO=jazzy ;;
+  # PX4's official uXRCE-DDS compatibility table requires Agent v2.4.2
+  # with ROS 2 Humble / Fast DDS 2.6.x, and v2.4.3 with Jazzy / 2.14.x.
+  22.04) ROS_DISTRO=humble; XRCE_TAG=v2.4.2 ;;
+  24.04) ROS_DISTRO=jazzy; XRCE_TAG=v2.4.3 ;;
   *) echo "Unsupported Ubuntu ${VERSION_ID}; expected 22.04 or 24.04" >&2; exit 2 ;;
 esac
 
-echo "[codex-setup] Ubuntu=${VERSION_ID} ROS_DISTRO=${ROS_DISTRO}"
+echo "[codex-setup] Ubuntu=${VERSION_ID} ROS_DISTRO=${ROS_DISTRO} XRCE_TAG=${XRCE_TAG}"
 
 sudo apt-get update
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -57,8 +59,13 @@ fi
 
 XRCE_DIR="${HOME}/Micro-XRCE-DDS-Agent"
 if [[ ! -d "${XRCE_DIR}/.git" ]]; then
-  git clone --depth 1 --branch v2.4.3 https://github.com/eProsima/Micro-XRCE-DDS-Agent.git "${XRCE_DIR}"
+  git clone --depth 1 --branch "${XRCE_TAG}" https://github.com/eProsima/Micro-XRCE-DDS-Agent.git "${XRCE_DIR}"
+else
+  git -C "${XRCE_DIR}" fetch --tags --depth 1 origin "${XRCE_TAG}"
+  git -C "${XRCE_DIR}" checkout -f "${XRCE_TAG}"
 fi
+# Never reuse an Agent build directory across ROS/Fast-DDS compatibility lines.
+rm -rf "${XRCE_DIR}/build"
 cmake -S "${XRCE_DIR}" -B "${XRCE_DIR}/build" -DCMAKE_BUILD_TYPE=Release
 cmake --build "${XRCE_DIR}/build" -j"$(nproc)"
 sudo cmake --install "${XRCE_DIR}/build"
@@ -85,6 +92,8 @@ export ROS_DISTRO=${ROS_DISTRO}
 export PX4_DIR=${PX4_DIR}
 export LEE_AB_ROOT=${ROOT}
 export XRCE_BIN=/usr/local/bin/MicroXRCEAgent
+export XRCE_TAG=${XRCE_TAG}
+export ROS_DOMAIN_ID=0
 export HEADLESS=1
 
 source_no_unset() {
