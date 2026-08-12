@@ -38,37 +38,86 @@ rm -rf "$PX4_DIR/build/px4_sitl_default/rootfs/log" || true
 ) > "$RUN_DIR/px4_gz.log" 2>&1 &
 PX4_PID=$!
 
-READY=0
+TOPIC_SEEN=0
 for i in $(seq 1 120); do
   if timeout 2s ros2 topic list 2>/dev/null | grep -q '^/fmu/out/vehicle_odometry$'; then
-    PROBE="$RUN_DIR/vehicle_odometry_probe.txt"
-    rm -f "$PROBE"
-    # PX4 uXRCE-DDS publications are BEST_EFFORT while ROS 2 CLI subscribers
-    # default to RELIABLE, which is incompatible. Match PX4's offered QoS.
-    if timeout 5s ros2 topic echo /fmu/out/vehicle_odometry --once \
-        --qos-reliability best_effort > "$PROBE" 2>/dev/null; then
-      # VehicleOdometry has `timestamp`, `timestamp_sample`, `pose_frame`, etc.;
-      # it intentionally has no ROS std_msgs/Header/frame_id field.
-      if grep -q '^timestamp:' "$PROBE"; then
-        echo "Received vehicle_odometry data, PX4 ready"
-        READY=1
-        break
-      fi
-    fi
+    TOPIC_SEEN=1
+    break
   fi
   sleep 1
 done
-if [[ $READY -ne 1 ]]; then
-  echo "PX4 did not produce vehicle_odometry data within 120 seconds" >&2
+
+timeout 5s ros2 topic info /fmu/out/vehicle_odometry -v \
+  > "$RUN_DIR/vehicle_odometry_topic_info.txt" 2>&1 || true
+
+if [[ $TOPIC_SEEN -ne 1 ]]; then
+  echo "PX4 did not advertise /fmu/out/vehicle_odometry within 120 seconds" >&2
   tail -n 200 "$RUN_DIR/px4_gz.log" >&2 || true
-  echo "--- ROS 2 odometry topics ---" >&2
-  timeout 2s ros2 topic list 2>/dev/null | grep -i odometry || echo "No odometry topics found" >&2
-  echo "--- vehicle_odometry topic info ---" >&2
-  timeout 4s ros2 topic info /fmu/out/vehicle_odometry -v >&2 || true
-  echo "--- last vehicle_odometry probe ---" >&2
-  [[ -f "$RUN_DIR/vehicle_odometry_probe.txt" ]] && cat "$RUN_DIR/vehicle_odometry_probe.txt" >&2 || true
+  cat "$RUN_DIR/vehicle_odometry_topic_info.txt" >&2 || true
   exit 20
 fi
+
+# Use the same message type and SensorDataQoS as the actual controller rather
+# than relying on ros2 topic echo CLI QoS/argument behavior. Keep stderr as an
+# artifact so a transport or type-support failure is directly diagnosable.
+set +e
+timeout 20s python3 - <<'PY' \
+  > "$RUN_DIR/vehicle_odometry_probe.txt" \
+  2> "$RUN_DIR/vehicle_odometry_probe.err"
+import sys
+import time
+import rclpy
+from px4_msgs.msg import VehicleOdometry
+from rclpy.qos import qos_profile_sensor_data
+
+rclpy.init()
+node = rclpy.create_node("lee_ab_vehicle_odometry_probe")
+received = []
+
+def on_odom(msg):
+    received.append(msg)
+
+sub = node.create_subscription(
+    VehicleOdometry,
+    "/fmu/out/vehicle_odometry",
+    on_odom,
+    qos_profile_sensor_data,
+)
+
+deadline = time.monotonic() + 12.0
+while rclpy.ok() and not received and time.monotonic() < deadline:
+    rclpy.spin_once(node, timeout_sec=0.25)
+
+if not received:
+    print("No VehicleOdometry sample received with SensorDataQoS", file=sys.stderr)
+    node.destroy_subscription(sub)
+    node.destroy_node()
+    rclpy.shutdown()
+    raise SystemExit(2)
+
+msg = received[0]
+print(f"timestamp={msg.timestamp}")
+print(f"timestamp_sample={msg.timestamp_sample}")
+print(f"pose_frame={msg.pose_frame}")
+node.destroy_subscription(sub)
+node.destroy_node()
+rclpy.shutdown()
+PY
+PROBE_STATUS=$?
+set -e
+
+if [[ $PROBE_STATUS -ne 0 ]] || ! grep -q '^timestamp=' "$RUN_DIR/vehicle_odometry_probe.txt"; then
+  echo "PX4 advertised vehicle_odometry but a SensorDataQoS subscriber received no sample (status=$PROBE_STATUS)" >&2
+  echo "--- vehicle_odometry topic info ---" >&2
+  cat "$RUN_DIR/vehicle_odometry_topic_info.txt" >&2 || true
+  echo "--- vehicle_odometry probe stdout ---" >&2
+  cat "$RUN_DIR/vehicle_odometry_probe.txt" >&2 || true
+  echo "--- vehicle_odometry probe stderr ---" >&2
+  cat "$RUN_DIR/vehicle_odometry_probe.err" >&2 || true
+  tail -n 200 "$RUN_DIR/px4_gz.log" >&2 || true
+  exit 20
+fi
+echo "Received vehicle_odometry data with SensorDataQoS, PX4 ready"
 
 set +e
 timeout "$((DURATION+35))"s ros2 run lee_ab_controller lee_ab_controller --ros-args \
@@ -89,7 +138,16 @@ if [[ ! -s "$RUN_DIR/controller.csv" ]]; then
   tail -n 160 "$RUN_DIR/px4_gz.log" >&2 || true
   exit 21
 fi
-if [[ $STATUS -ne 0 && $STATUS -ne 124 ]]; then
-  echo "controller exited status=$STATUS" >&2
+
+CSV_LINES=$(wc -l < "$RUN_DIR/controller.csv")
+if [[ $CSV_LINES -lt 50 ]]; then
+  echo "controller.csv has only $CSV_LINES lines; real SITL controller data is incomplete" >&2
+  tail -n 160 "$RUN_DIR/controller.log" >&2 || true
+  exit 22
+fi
+
+if [[ $STATUS -ne 0 ]]; then
+  echo "controller exited or timed out with status=$STATUS" >&2
+  tail -n 160 "$RUN_DIR/controller.log" >&2 || true
   exit "$STATUS"
 fi
