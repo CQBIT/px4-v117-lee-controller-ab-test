@@ -7,12 +7,17 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . /etc/os-release
 case "${VERSION_ID}" in
-  # PX4's official uXRCE-DDS compatibility table requires Agent v2.4.2
-  # with ROS 2 Humble / Fast DDS 2.6.x, and v2.4.3 with Jazzy / 2.14.x.
-  22.04) ROS_DISTRO=humble; XRCE_TAG=v2.4.2 ;;
-  24.04) ROS_DISTRO=jazzy; XRCE_TAG=v2.4.3 ;;
+  22.04) ROS_DISTRO=humble ;;
+  24.04) ROS_DISTRO=jazzy ;;
   *) echo "Unsupported Ubuntu ${VERSION_ID}; expected 22.04 or 24.04" >&2; exit 2 ;;
 esac
+
+# This script builds Micro-XRCE-DDS-Agent *standalone* with its own dependency
+# superbuild. PX4 v1.17's official middleware guide tests the standalone source
+# installation with Agent v2.4.3. The Humble=v2.4.2 compatibility entry applies
+# to the separate "build/run within a ROS 2 workspace" method, where the Agent
+# reuses ROS-provided Fast DDS/Fast CDR libraries.
+XRCE_TAG=v2.4.3
 
 echo "[codex-setup] Ubuntu=${VERSION_ID} ROS_DISTRO=${ROS_DISTRO} XRCE_TAG=${XRCE_TAG}"
 
@@ -64,7 +69,7 @@ else
   git -C "${XRCE_DIR}" fetch --tags --depth 1 origin "${XRCE_TAG}"
   git -C "${XRCE_DIR}" checkout -f "${XRCE_TAG}"
 fi
-# Never reuse an Agent build directory across ROS/Fast-DDS compatibility lines.
+# Never reuse an Agent build directory across versions/dependency lines.
 rm -rf "${XRCE_DIR}/build"
 cmake -S "${XRCE_DIR}" -B "${XRCE_DIR}/build" -DCMAKE_BUILD_TYPE=Release
 cmake --build "${XRCE_DIR}/build" -j"$(nproc)"
