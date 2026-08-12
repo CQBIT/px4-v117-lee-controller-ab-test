@@ -40,13 +40,17 @@ PX4_PID=$!
 
 READY=0
 for i in $(seq 1 120); do
-  # Check if the topic exists
-  if timeout 2s ros2 topic list 2>/dev/null | grep -q '/fmu/out/vehicle_odometry'; then
-    # Topic exists, try to receive one message with timeout
-    if timeout 3s ros2 topic echo /fmu/out/vehicle_odometry --once 2>/dev/null | grep -q 'frame_id'; then
-      echo "Received vehicle_odometry data, PX4 ready"
-      READY=1
-      break
+  if timeout 2s ros2 topic list 2>/dev/null | grep -q '^/fmu/out/vehicle_odometry$'; then
+    PROBE="$RUN_DIR/vehicle_odometry_probe.txt"
+    rm -f "$PROBE"
+    if timeout 5s ros2 topic echo /fmu/out/vehicle_odometry --once > "$PROBE" 2>/dev/null; then
+      # VehicleOdometry has `timestamp`, `timestamp_sample`, `pose_frame`, etc.;
+      # it intentionally has no ROS std_msgs/Header/frame_id field.
+      if grep -q '^timestamp:' "$PROBE"; then
+        echo "Received vehicle_odometry data, PX4 ready"
+        READY=1
+        break
+      fi
     fi
   fi
   sleep 1
@@ -54,8 +58,12 @@ done
 if [[ $READY -ne 1 ]]; then
   echo "PX4 did not produce vehicle_odometry data within 120 seconds" >&2
   tail -n 200 "$RUN_DIR/px4_gz.log" >&2 || true
-  echo "---" >&2
+  echo "--- ROS 2 odometry topics ---" >&2
   timeout 2s ros2 topic list 2>/dev/null | grep -i odometry || echo "No odometry topics found" >&2
+  echo "--- vehicle_odometry topic info ---" >&2
+  timeout 4s ros2 topic info /fmu/out/vehicle_odometry -v >&2 || true
+  echo "--- last vehicle_odometry probe ---" >&2
+  [[ -f "$RUN_DIR/vehicle_odometry_probe.txt" ]] && cat "$RUN_DIR/vehicle_odometry_probe.txt" >&2 || true
   exit 20
 fi
 
