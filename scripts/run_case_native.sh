@@ -43,7 +43,10 @@ for i in $(seq 1 120); do
   if timeout 2s ros2 topic list 2>/dev/null | grep -q '^/fmu/out/vehicle_odometry$'; then
     PROBE="$RUN_DIR/vehicle_odometry_probe.txt"
     rm -f "$PROBE"
-    if timeout 5s ros2 topic echo /fmu/out/vehicle_odometry --once > "$PROBE" 2>/dev/null; then
+    # PX4 uXRCE-DDS publications are BEST_EFFORT while ROS 2 CLI subscribers
+    # default to RELIABLE, which is incompatible. Match PX4's offered QoS.
+    if timeout 5s ros2 topic echo /fmu/out/vehicle_odometry --once \
+        --qos-reliability best_effort > "$PROBE" 2>/dev/null; then
       # VehicleOdometry has `timestamp`, `timestamp_sample`, `pose_frame`, etc.;
       # it intentionally has no ROS std_msgs/Header/frame_id field.
       if grep -q '^timestamp:' "$PROBE"; then
