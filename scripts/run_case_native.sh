@@ -119,11 +119,27 @@ if [[ $PROBE_STATUS -ne 0 ]] || ! grep -q '^timestamp=' "$RUN_DIR/vehicle_odomet
 fi
 echo "Received vehicle_odometry data with SensorDataQoS, PX4 ready"
 
+# rclcpp declares `duration` as a double. A bare YAML scalar such as `25` is
+# parsed by the ROS 2 CLI as an integer and is rejected for a statically typed
+# double parameter. Normalize integer durations to an explicit floating-point
+# scalar while retaining the integer value for GNU timeout arithmetic.
+if [[ "$DURATION" =~ ^[0-9]+$ ]]; then
+  DURATION_PARAM="${DURATION}.0"
+else
+  DURATION_PARAM="$DURATION"
+fi
+TIMEOUT_SECONDS=$(python3 - "$DURATION" <<'PY'
+import math
+import sys
+print(max(1, math.ceil(float(sys.argv[1]) + 35.0)))
+PY
+)
+
 set +e
-timeout "$((DURATION+35))"s ros2 run lee_ab_controller lee_ab_controller --ros-args \
+timeout "${TIMEOUT_SECONDS}s" ros2 run lee_ab_controller lee_ab_controller --ros-args \
   -p mode:="$MODE" \
   -p scenario:="$SCENARIO" \
-  -p duration:="$DURATION" \
+  -p duration:="$DURATION_PARAM" \
   -p output_csv:="$RUN_DIR/controller.csv" \
   > "$RUN_DIR/controller.log" 2>&1
 STATUS=$?
