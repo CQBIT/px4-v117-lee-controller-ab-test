@@ -38,10 +38,20 @@ rm -rf "$PX4_DIR/build/px4_sitl_default/rootfs/log" || true
 ) > "$RUN_DIR/px4_gz.log" 2>&1 &
 PX4_PID=$!
 
-TOPIC_SEEN=0
-for i in $(seq 1 120); do
-  if timeout 2s ros2 topic list 2>/dev/null | grep -q '^/fmu/out/vehicle_odometry$'; then
-    TOPIC_SEEN=1
+# Do not use `ros2 topic list` as the primary readiness condition between
+# sequential cases. The ROS 2 discovery graph can briefly retain endpoints
+# from the previous Micro XRCE-DDS Agent, which made a stale VehicleOdometry
+# endpoint look ready while the newly-started PX4 client was still performing
+# XRCE time synchronization/entity creation. Instead wait for this PX4 process
+# itself to report creation of its VehicleOdometry DDS writer.
+DDS_WRITER_READY=0
+for i in $(seq 1 180); do
+  if grep -q 'successfully created rt/fmu/out/vehicle_odometry data writer' "$RUN_DIR/px4_gz.log" 2>/dev/null; then
+    DDS_WRITER_READY=1
+    break
+  fi
+  if ! kill -0 "$PX4_PID" 2>/dev/null; then
+    echo "PX4/Gazebo process exited before creating VehicleOdometry DDS writer" >&2
     break
   fi
   sleep 1
@@ -50,18 +60,22 @@ done
 timeout 5s ros2 topic info /fmu/out/vehicle_odometry -v \
   > "$RUN_DIR/vehicle_odometry_topic_info.txt" 2>&1 || true
 
-if [[ $TOPIC_SEEN -ne 1 ]]; then
-  echo "PX4 did not advertise /fmu/out/vehicle_odometry within 120 seconds" >&2
-  tail -n 200 "$RUN_DIR/px4_gz.log" >&2 || true
+if [[ $DDS_WRITER_READY -ne 1 ]]; then
+  echo "Current PX4 instance did not create the VehicleOdometry DDS writer within 180 seconds" >&2
+  echo "--- vehicle_odometry topic info (may include stale discovery data) ---" >&2
   cat "$RUN_DIR/vehicle_odometry_topic_info.txt" >&2 || true
+  echo "--- XRCE agent tail ---" >&2
+  tail -n 200 "$RUN_DIR/xrce.log" >&2 || true
+  echo "--- PX4/Gazebo tail ---" >&2
+  tail -n 240 "$RUN_DIR/px4_gz.log" >&2 || true
   exit 20
 fi
 
-# Use the same message type and SensorDataQoS as the actual controller rather
-# than relying on ros2 topic echo CLI QoS/argument behavior. Keep stderr as an
-# artifact so a transport or type-support failure is directly diagnosable.
+# Confirm end-to-end DDS delivery with the same message type and SensorDataQoS
+# used by the controller. This verifies that the current writer is not merely
+# registered but actually delivering real PX4 SITL odometry samples.
 set +e
-timeout 20s python3 - <<'PY' \
+timeout 35s python3 - <<'PY' \
   > "$RUN_DIR/vehicle_odometry_probe.txt" \
   2> "$RUN_DIR/vehicle_odometry_probe.err"
 import sys
@@ -84,7 +98,7 @@ sub = node.create_subscription(
     qos_profile_sensor_data,
 )
 
-deadline = time.monotonic() + 12.0
+deadline = time.monotonic() + 30.0
 while rclpy.ok() and not received and time.monotonic() < deadline:
     rclpy.spin_once(node, timeout_sec=0.25)
 
@@ -107,17 +121,20 @@ PROBE_STATUS=$?
 set -e
 
 if [[ $PROBE_STATUS -ne 0 ]] || ! grep -q '^timestamp=' "$RUN_DIR/vehicle_odometry_probe.txt"; then
-  echo "PX4 advertised vehicle_odometry but a SensorDataQoS subscriber received no sample (status=$PROBE_STATUS)" >&2
+  echo "Current PX4 VehicleOdometry writer exists but SensorDataQoS subscriber received no sample (status=$PROBE_STATUS)" >&2
   echo "--- vehicle_odometry topic info ---" >&2
   cat "$RUN_DIR/vehicle_odometry_topic_info.txt" >&2 || true
   echo "--- vehicle_odometry probe stdout ---" >&2
   cat "$RUN_DIR/vehicle_odometry_probe.txt" >&2 || true
   echo "--- vehicle_odometry probe stderr ---" >&2
   cat "$RUN_DIR/vehicle_odometry_probe.err" >&2 || true
-  tail -n 200 "$RUN_DIR/px4_gz.log" >&2 || true
+  echo "--- XRCE agent tail ---" >&2
+  tail -n 200 "$RUN_DIR/xrce.log" >&2 || true
+  echo "--- PX4/Gazebo tail ---" >&2
+  tail -n 240 "$RUN_DIR/px4_gz.log" >&2 || true
   exit 20
 fi
-echo "Received vehicle_odometry data with SensorDataQoS, PX4 ready"
+echo "Received VehicleOdometry from current PX4 instance with SensorDataQoS; PX4 ready"
 
 # rclcpp declares `duration` as a double. A bare YAML scalar such as `25` is
 # parsed by the ROS 2 CLI as an integer and is rejected for a statically typed
