@@ -7,6 +7,7 @@
 #include <px4_msgs/msg/vehicle_command_ack.hpp>
 #include <px4_msgs/msg/vehicle_odometry.hpp>
 #include <px4_msgs/msg/vehicle_status.hpp>
+#include <px4_msgs/msg/vehicle_control_mode.hpp>
 
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
@@ -33,6 +34,7 @@ using px4_msgs::msg::VehicleCommand;
 using px4_msgs::msg::VehicleCommandAck;
 using px4_msgs::msg::VehicleOdometry;
 using px4_msgs::msg::VehicleStatus;
+using px4_msgs::msg::VehicleControlMode;
 
 namespace {
 constexpr double kPi = 3.14159265358979323846;
@@ -101,7 +103,6 @@ public:
     max_torque_norm_ = declare_parameter<double>("max_torque_norm", 0.55);
     max_thrust_norm_ = declare_parameter<double>("max_thrust_norm", 0.90);
 
-    // Official x500 motor model: 4 * k_f * omega_max^2.
     constexpr double motor_constant = 8.54858e-6;
     constexpr double omega_max = 1000.0;
     max_total_thrust_n_ = 4.0 * motor_constant * omega_max * omega_max;
@@ -110,8 +111,6 @@ public:
       throw std::runtime_error("mode must be 'rate' or 'torque'");
     }
 
-    // PX4 v1.17 DDS subscribers are best-effort, so the normal ROS 2 reliable
-    // publisher QoS is compatible and matches the official PX4 offboard example.
     auto pub_qos = rclcpp::QoS(rclcpp::KeepLast(10));
     offboard_pub_ = create_publisher<OffboardControlMode>("/fmu/in/offboard_control_mode", pub_qos);
     rates_pub_ = create_publisher<VehicleRatesSetpoint>("/fmu/in/vehicle_rates_setpoint", pub_qos);
@@ -125,6 +124,9 @@ public:
     status_sub_ = create_subscription<VehicleStatus>(
       "/fmu/out/vehicle_status", rclcpp::SensorDataQoS(),
       [this](const VehicleStatus::SharedPtr msg) { on_status(*msg); });
+    control_mode_sub_ = create_subscription<VehicleControlMode>(
+      "/fmu/out/vehicle_control_mode", rclcpp::SensorDataQoS(),
+      [this](const VehicleControlMode::SharedPtr msg) { on_control_mode(*msg); });
     ack_sub_ = create_subscription<VehicleCommandAck>(
       "/fmu/out/vehicle_command_ack", rclcpp::SensorDataQoS(),
       [this](const VehicleCommandAck::SharedPtr msg) { on_ack(*msg); });
@@ -162,7 +164,7 @@ private:
     omega_ = Eigen::Vector3d(m.angular_velocity[0], m.angular_velocity[1], m.angular_velocity[2]);
     Eigen::Quaterniond q(m.q[0], m.q[1], m.q[2], m.q[3]);
     q.normalize();
-    R_ = q.toRotationMatrix(); // FRD body coordinates -> NED world coordinates.
+    R_ = q.toRotationMatrix();
     if (!yaw_initialized_) {
       yaw0_ = std::atan2(R_(1,0), R_(0,0));
       yaw_initialized_ = true;
@@ -173,11 +175,26 @@ private:
 
   void on_status(const VehicleStatus &m) {
     status_ready_ = true;
-    armed_ = (m.arming_state == VehicleStatus::ARMING_STATE_ARMED);
-    offboard_active_ = (m.nav_state == VehicleStatus::NAVIGATION_STATE_OFFBOARD);
     nav_state_ = m.nav_state;
     failsafe_ = m.failsafe;
     preflight_ok_ = m.pre_flight_checks_pass;
+    if (!control_mode_ready_) {
+      armed_ = (m.arming_state == VehicleStatus::ARMING_STATE_ARMED);
+      offboard_active_ = (m.nav_state == VehicleStatus::NAVIGATION_STATE_OFFBOARD);
+    }
+  }
+
+  void on_control_mode(const VehicleControlMode &m) {
+    const bool first = !control_mode_ready_;
+    control_mode_ready_ = true;
+    armed_ = m.flag_armed;
+    offboard_active_ = m.flag_control_offboard_enabled;
+    if (!status_ready_) nav_state_ = m.source_id;
+    if (first) {
+      RCLCPP_INFO(get_logger(), "VehicleControlMode received: armed=%d offboard=%d source_id=%u",
+                  armed_ ? 1 : 0, offboard_active_ ? 1 : 0,
+                  static_cast<unsigned>(m.source_id));
+    }
   }
 
   void on_ack(const VehicleCommandAck &m) {
@@ -191,7 +208,7 @@ private:
 
   Reference reference(double flight_t) const {
     Reference r;
-    r.yaw = yaw0_; // Hold the EKF-initialized heading; compare low-level interfaces, not yaw-reset transients.
+    r.yaw = yaw0_;
     const double z_ramp = smoothstep01(flight_t / 3.0);
     r.p.z() = -2.0 * z_ramp;
     r.v.z() = (flight_t < 3.0) ? -2.0 * (6.0*(flight_t/3.0)*(1.0-flight_t/3.0)) / 3.0 : 0.0;
@@ -292,21 +309,23 @@ private:
     const double dt = clampd(now - prev_time_, 0.001, 0.05);
     prev_time_ = now;
 
-    // PX4 requires an OffboardControlMode proof-of-life stream before mode
-    // switch/arming. Retry the two commands until VehicleStatus proves that
-    // they actually took effect; a command publication by itself is not success.
-    if (t > 3.0 && !offboard_active_ && now - last_mode_command_time_ > 0.5) {
+    // PX4's official ROS 2 offboard example sends the mode-change and arm
+    // commands in the same cycle after first streaming OffboardControlMode.
+    // Do not gate the arm command on VehicleStatus: in headless CI that topic
+    // can fail to reach a ROS subscriber even while command acks and odometry do.
+    // VehicleControlMode is exported by PX4 v1.17 at 50 Hz and directly exposes
+    // the armed/offboard control flags, so use it as the primary confirmation.
+    if (t > 2.0 && !offboard_active_ && now - last_mode_command_time_ > 0.5) {
       command(VehicleCommand::VEHICLE_CMD_DO_SET_MODE, 1.f, 6.f);
       last_mode_command_time_ = now;
     }
-    if (t > 4.0 && offboard_active_ && !armed_ && now - last_arm_command_time_ > 0.5) {
-      // param2=21196 requests force-arm; this is limited to headless SITL CI.
+    if (t > 2.0 && !armed_ && now - last_arm_command_time_ > 0.5) {
       command(VehicleCommand::VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.f, 21196.f);
       last_arm_command_time_ = now;
     }
 
-    if (t > 18.0 && (!status_ready_ || !offboard_active_ || !armed_)) {
-      fatal_exit(30, "PX4 failed to enter armed Offboard state within 18 s; inspect VehicleCommandAck/VehicleStatus logs");
+    if (t > 18.0 && (!control_mode_ready_ || !offboard_active_ || !armed_)) {
+      fatal_exit(30, "PX4 failed to confirm armed Offboard state via VehicleControlMode within 18 s");
     }
 
     if (armed_ && offboard_active_ && !flight_started_) {
@@ -329,9 +348,8 @@ private:
     const Eigen::Vector3d ev = v_ - ref.v;
     const Eigen::Vector3d a_cmd = ref.a - kp_pos_.cwiseProduct(ep) - kd_vel_.cwiseProduct(ev);
 
-    // NED/FRD convention: gravity is +z, rotor thrust is along -body-z.
     const Eigen::Vector3d e3(0.0,0.0,1.0);
-    Eigen::Vector3d thrust_axis = 9.80665*e3 - a_cmd; // desired body +z axis in NED
+    Eigen::Vector3d thrust_axis = 9.80665*e3 - a_cmd;
     if (thrust_axis.norm() < 1e-6) thrust_axis = e3;
     const Eigen::Vector3d b3d = thrust_axis.normalized();
     const Eigen::Matrix3d Rd = desired_attitude(b3d, ref.yaw);
@@ -349,7 +367,6 @@ private:
       omega_dot_d_filt_.setZero();
       desired_rate_initialized_ = true;
     }
-    // Deliberately filtered finite differences: both A/B branches share Omega_d.
     omega_d_filt_ = 0.25*omega_d_raw + 0.75*omega_d_filt_;
     Eigen::Vector3d omega_dot_raw = (omega_d_filt_ - prev_omega_d_filt_) / dt;
     omega_dot_d_filt_ = 0.15*omega_dot_raw + 0.85*omega_dot_d_filt_;
@@ -433,13 +450,14 @@ private:
   rclcpp::Publisher<VehicleCommand>::SharedPtr command_pub_;
   rclcpp::Subscription<VehicleOdometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<VehicleStatus>::SharedPtr status_sub_;
+  rclcpp::Subscription<VehicleControlMode>::SharedPtr control_mode_sub_;
   rclcpp::Subscription<VehicleCommandAck>::SharedPtr ack_sub_;
   rclcpp::TimerBase::SharedPtr timer_;
 
   Eigen::Vector3d p_{Eigen::Vector3d::Zero()}, v_{Eigen::Vector3d::Zero()}, omega_{Eigen::Vector3d::Zero()};
   Eigen::Matrix3d R_{Eigen::Matrix3d::Identity()}, prev_Rd_{Eigen::Matrix3d::Identity()};
   Eigen::Vector3d omega_d_filt_{Eigen::Vector3d::Zero()}, prev_omega_d_filt_{Eigen::Vector3d::Zero()}, omega_dot_d_filt_{Eigen::Vector3d::Zero()};
-  bool odom_ready_{false}, status_ready_{false}, started_{false}, flight_started_{false};
+  bool odom_ready_{false}, status_ready_{false}, control_mode_ready_{false}, started_{false}, flight_started_{false};
   bool armed_{false}, offboard_active_{false}, failsafe_{false}, preflight_ok_{false};
   bool disarm_commanded_{false}, desired_rate_initialized_{false}, yaw_initialized_{false};
   uint8_t nav_state_{255};
