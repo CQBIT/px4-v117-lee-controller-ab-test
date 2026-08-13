@@ -315,17 +315,22 @@ private:
     // can fail to reach a ROS subscriber even while command acks and odometry do.
     // VehicleControlMode is exported by PX4 v1.17 at 50 Hz and directly exposes
     // the armed/offboard control flags, so use it as the primary confirmation.
-    if (t > 2.0 && !offboard_active_ && now - last_mode_command_time_ > 0.5) {
-      command(VehicleCommand::VEHICLE_CMD_DO_SET_MODE, 1.f, 6.f);
-      last_mode_command_time_ = now;
-    }
-    if (t > 2.0 && !armed_ && now - last_arm_command_time_ > 0.5) {
-      command(VehicleCommand::VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.f, 21196.f);
-      last_arm_command_time_ = now;
-    }
+    // Startup retries and the startup timeout must stop once the real flight has
+    // begun, otherwise the intentional end-of-test disarm is mistaken for a
+    // startup failure and can immediately command an unintended re-arm.
+    if (!flight_started_ && !disarm_commanded_) {
+      if (t > 2.0 && !offboard_active_ && now - last_mode_command_time_ > 0.5) {
+        command(VehicleCommand::VEHICLE_CMD_DO_SET_MODE, 1.f, 6.f);
+        last_mode_command_time_ = now;
+      }
+      if (t > 2.0 && !armed_ && now - last_arm_command_time_ > 0.5) {
+        command(VehicleCommand::VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.f, 21196.f);
+        last_arm_command_time_ = now;
+      }
 
-    if (t > 18.0 && (!control_mode_ready_ || !offboard_active_ || !armed_)) {
-      fatal_exit(30, "PX4 failed to confirm armed Offboard state via VehicleControlMode within 18 s");
+      if (t > 18.0 && (!control_mode_ready_ || !offboard_active_ || !armed_)) {
+        fatal_exit(30, "PX4 failed to confirm armed Offboard state via VehicleControlMode within 18 s");
+      }
     }
 
     if (armed_ && offboard_active_ && !flight_started_) {
@@ -337,7 +342,7 @@ private:
       RCLCPP_INFO(get_logger(), "PX4 confirmed ARMED + OFFBOARD; starting experiment clock");
     }
 
-    if (flight_started_ && (!armed_ || !offboard_active_ || failsafe_)) {
+    if (flight_started_ && !disarm_commanded_ && (!armed_ || !offboard_active_ || failsafe_)) {
       fatal_exit(31, "PX4 left armed Offboard state or entered failsafe during experiment");
     }
 
