@@ -34,6 +34,10 @@ rm -rf "$PX4_DIR/build/px4_sitl_default/rootfs/log" || true
   cd "$PX4_DIR"
   export HEADLESS=1
   export PX4_GZ_WORLD=default
+  # The official PX4 v1.17 gz_x500 airframe sets NAV_DLL_ACT=2, which makes
+  # a GCS data link mandatory for arming. This CI is intentionally headless.
+  # PX4 documents PX4_PARAM_* as the supported SITL parameter override path.
+  export PX4_PARAM_NAV_DLL_ACT=0
   make px4_sitl gz_x500
 ) > "$RUN_DIR/px4_gz.log" 2>&1 &
 PX4_PID=$!
