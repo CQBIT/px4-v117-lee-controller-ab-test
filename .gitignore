@@ -3,7 +3,10 @@ ros2_ws/install/
 ros2_ws/log/
 ros2_ws/src/px4_msgs/
 codex/runtime_env.sh
-results/*
-!results/.gitkeep
 __pycache__/
 *.pyc
+
+# Keep validated lightweight SITL outputs in Git, but leave large binary/verbose
+# flight artifacts in GitHub Actions artifacts only.
+results/**/*.ulg
+results/**/px4_gz.log
