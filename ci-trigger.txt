@@ -1,2 +1,3 @@
 This file is used to trigger pull-request based PX4 SITL cloud tests.
 First cloud execution requested.
+Visualization-complete validation requested.
