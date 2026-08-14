@@ -1,0 +1,8 @@
+[INFO] [1786693043.285955450] [lee_ab_controller]: mode=rate scenario=hover hz=100.0 output=/home/runner/work/px4-v117-lee-controller-ab-test/px4-v117-lee-controller-ab-test/results/hover_rate/controller.csv
+[INFO] [1786693043.375933163] [lee_ab_controller]: Captured initial NED yaw 1.675 rad (95.9 deg)
+[INFO] [1786693043.383105933] [lee_ab_controller]: VehicleControlMode received: armed=0 offboard=0 source_id=0
+[INFO] [1786693045.391368013] [lee_ab_controller]: VehicleCommandAck command=176 result=0 result_param1=0 result_param2=0
+[INFO] [1786693045.391710600] [lee_ab_controller]: VehicleCommandAck command=400 result=0 result_param1=0 result_param2=0
+[INFO] [1786693045.396139620] [lee_ab_controller]: PX4 confirmed ARMED + OFFBOARD; starting experiment clock
+[INFO] [1786693070.411345934] [lee_ab_controller]: VehicleCommandAck command=400 result=0 result_param1=0 result_param2=0
+[INFO] [1786693070.416772903] [lee_ab_controller]: Experiment complete

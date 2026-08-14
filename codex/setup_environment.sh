@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Native Codex Cloud setup for PX4 v1.17 + Gazebo x500 + ROS 2.
+# Native cloud setup for PX4 v1.17 + Gazebo x500 + ROS 2.
 # Supports Ubuntu 22.04 (ROS 2 Humble) and Ubuntu 24.04 (ROS 2 Jazzy).
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -12,7 +12,14 @@ case "${VERSION_ID}" in
   *) echo "Unsupported Ubuntu ${VERSION_ID}; expected 22.04 or 24.04" >&2; exit 2 ;;
 esac
 
-echo "[codex-setup] Ubuntu=${VERSION_ID} ROS_DISTRO=${ROS_DISTRO}"
+# This script builds Micro-XRCE-DDS-Agent *standalone* with its own dependency
+# superbuild. PX4 v1.17's official middleware guide tests the standalone source
+# installation with Agent v2.4.3. The Humble=v2.4.2 compatibility entry applies
+# to the separate "build/run within a ROS 2 workspace" method, where the Agent
+# reuses ROS-provided Fast DDS/Fast CDR libraries.
+XRCE_TAG=v2.4.3
+
+echo "[codex-setup] Ubuntu=${VERSION_ID} ROS_DISTRO=${ROS_DISTRO} XRCE_TAG=${XRCE_TAG}"
 
 sudo apt-get update
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -57,8 +64,13 @@ fi
 
 XRCE_DIR="${HOME}/Micro-XRCE-DDS-Agent"
 if [[ ! -d "${XRCE_DIR}/.git" ]]; then
-  git clone --depth 1 --branch v2.4.3 https://github.com/eProsima/Micro-XRCE-DDS-Agent.git "${XRCE_DIR}"
+  git clone --depth 1 --branch "${XRCE_TAG}" https://github.com/eProsima/Micro-XRCE-DDS-Agent.git "${XRCE_DIR}"
+else
+  git -C "${XRCE_DIR}" fetch --tags --depth 1 origin "${XRCE_TAG}"
+  git -C "${XRCE_DIR}" checkout -f "${XRCE_TAG}"
 fi
+# Never reuse an Agent build directory across versions/dependency lines.
+rm -rf "${XRCE_DIR}/build"
 cmake -S "${XRCE_DIR}" -B "${XRCE_DIR}/build" -DCMAKE_BUILD_TYPE=Release
 cmake --build "${XRCE_DIR}/build" -j"$(nproc)"
 sudo cmake --install "${XRCE_DIR}/build"
@@ -67,18 +79,48 @@ sudo ldconfig
 cd "${PX4_DIR}"
 make -j"$(nproc)" px4_sitl_default
 
+# ROS setup scripts are not guaranteed to be nounset-safe. Temporarily disable
+# `set -u` while sourcing them, then restore strict mode for our own script.
+set +u
 source "/opt/ros/${ROS_DISTRO}/setup.bash"
+set -u
 cd "${ROOT}/ros2_ws"
 colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
 
-python3 -m pip install --user --break-system-packages numpy pandas matplotlib pyulog || \
-python3 -m pip install --user numpy pandas matplotlib pyulog
+python3 -m pip install --user --break-system-packages numpy pandas matplotlib pillow pyulog || \
+python3 -m pip install --user numpy pandas matplotlib pillow pyulog
 
+# Generate a reusable environment helper. Setup-time paths/distros are expanded
+# here; function-local variables are escaped so they are evaluated when sourced.
 cat > "${ROOT}/codex/runtime_env.sh" <<ENVEOF
 export ROS_DISTRO=${ROS_DISTRO}
 export PX4_DIR=${PX4_DIR}
+export LEE_AB_ROOT=${ROOT}
 export XRCE_BIN=/usr/local/bin/MicroXRCEAgent
+export XRCE_TAG=${XRCE_TAG}
+export ROS_DOMAIN_ID=0
 export HEADLESS=1
+
+source_no_unset() {
+  local setup_file="\$1"
+  local restore_u=0
+  case "\$-" in
+    *u*) restore_u=1; set +u ;;
+  esac
+  # shellcheck disable=SC1090
+  source "\$setup_file"
+  if [[ "\$restore_u" -eq 1 ]]; then
+    set -u
+  fi
+}
+
+source_ros() {
+  source_no_unset "/opt/ros/\${ROS_DISTRO}/setup.bash"
+}
+
+source_lee_ws() {
+  source_no_unset "\${LEE_AB_ROOT}/ros2_ws/install/setup.bash"
+}
 ENVEOF
 
 echo "[codex-setup] complete"

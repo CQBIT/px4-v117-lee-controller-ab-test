@@ -1,0 +1,20 @@
+Type: px4_msgs/msg/VehicleOdometry
+
+Publisher count: 1
+
+Node name: _CREATED_BY_BARE_DDS_APP_
+Node namespace: _CREATED_BY_BARE_DDS_APP_
+Topic type: px4_msgs/msg/VehicleOdometry
+Endpoint type: PUBLISHER
+GID: 01.0f.ad.2c.9e.d4.9b.ae.00.00.00.00.00.00.3b.03.00.00.00.00.00.00.00.00
+QoS profile:
+  Reliability: BEST_EFFORT
+  History (Depth): UNKNOWN
+  Durability: TRANSIENT_LOCAL
+  Lifespan: Infinite
+  Deadline: Infinite
+  Liveliness: AUTOMATIC
+  Liveliness lease duration: Infinite
+
+Subscription count: 0
+

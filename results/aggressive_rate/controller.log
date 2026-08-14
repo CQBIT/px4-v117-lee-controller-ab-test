@@ -1,0 +1,8 @@
+[INFO] [1786693339.508237305] [lee_ab_controller]: mode=rate scenario=aggressive hz=100.0 output=/home/runner/work/px4-v117-lee-controller-ab-test/px4-v117-lee-controller-ab-test/results/aggressive_rate/controller.csv
+[INFO] [1786693339.597557366] [lee_ab_controller]: Captured initial NED yaw 1.674 rad (95.9 deg)
+[INFO] [1786693339.616889266] [lee_ab_controller]: VehicleControlMode received: armed=0 offboard=0 source_id=0
+[INFO] [1786693341.609041918] [lee_ab_controller]: VehicleCommandAck command=176 result=0 result_param1=0 result_param2=0
+[INFO] [1786693341.609379998] [lee_ab_controller]: VehicleCommandAck command=400 result=0 result_param1=0 result_param2=0
+[INFO] [1786693341.618404401] [lee_ab_controller]: PX4 confirmed ARMED + OFFBOARD; starting experiment clock
+[INFO] [1786693366.629218277] [lee_ab_controller]: VehicleCommandAck command=400 result=0 result_param1=0 result_param2=0
+[INFO] [1786693366.638918114] [lee_ab_controller]: Experiment complete
