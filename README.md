@@ -1,103 +1,75 @@
 # PX4 v1.17 + Gazebo x500 + ROS 2 — Lee Torque vs Body-Rate A/B Test
 
-This repository is prepared for a **native Codex Cloud Ubuntu experiment** comparing two low-level PX4 offboard control architectures on the same vehicle, trajectory and outer loop.
+This repository runs a native cloud PX4 v1.17 SITL + Gazebo `x500` + ROS 2 experiment comparing two low-level offboard control architectures on the same vehicle, trajectory, and outer loop.
 
 ## Compared architectures
 
-### A. Geometric body-rate interface
+- **PX4 body-rate path**: Lee/geometric outer loop generates body-rate and thrust setpoints, then PX4 closes the rate loop and performs control allocation.
+- **Direct-torque path**: Lee/geometric controller generates thrust and body torque setpoints directly, bypassing the PX4 body-rate controller while retaining PX4 control allocation.
 
-`position/velocity geometric outer loop -> SO(3) attitude error -> body-rate setpoint -> VehicleRatesSetpoint -> PX4 mc_rate_control -> PX4 control_allocator -> Gazebo x500`
+The experiment intentionally compares the two interfaces inside the real PX4 SITL stack rather than replacing PX4 with a standalone vehicle model.
 
-### B. Full Lee direct torque interface
+## Test matrix
 
-`position/velocity geometric outer loop -> full Lee SO(3) moment law -> VehicleThrustSetpoint + VehicleTorqueSetpoint -> PX4 control_allocator -> Gazebo x500`
+The suite runs four scenarios for 25 seconds each in both modes:
 
-The purpose is to measure how much performance is gained or lost when the Lee moment law replaces PX4's onboard multicopter rate loop.
+- `hover`
+- `circle`
+- `figure8`
+- `aggressive`
 
-## Fixed software targets
+This gives eight independent PX4 SITL cases. Each case must reach **ARMED + OFFBOARD**, produce controller telemetry, and produce a non-empty PX4 ULog before the result set is accepted.
 
-- PX4-Autopilot: `v1.17.0`
-- Vehicle: Gazebo `gz_x500`
-- `px4_msgs`: `release/1.17`
-- Micro XRCE-DDS Agent: `v2.4.3`
-- ROS 2: Humble on Ubuntu 22.04 or Jazzy on Ubuntu 24.04
-- Simulation: headless native PX4 SITL + Gazebo
+## Main program locations
 
-## Repository layout
+- Lee ROS 2 controller: `ros2_ws/src/lee_ab_controller/src/lee_ab_controller.cpp`
+- Single-case PX4/Gazebo runner: `scripts/run_case_native.sh`
+- Paired A/B suite runner: `scripts/run_suite_native.sh`
+- Analysis, figures, and GIF generation: `scripts/analyze_results.py`
+- GitHub Actions workflow: `.github/workflows/px4-ab-test.yml`
+- Cloud environment setup: `codex/setup_environment.sh`
 
-```text
-AGENTS.md
-CODEX_TASK.md
-codex/
-  setup_environment.sh
-ros2_ws/src/lee_ab_controller/
-  CMakeLists.txt
-  package.xml
-  src/lee_ab_controller.cpp
-scripts/
-  run_case_native.sh
-  run_suite_native.sh
-  analyze_results.py
-results/
-```
+## Result policy
 
-## Codex Cloud usage
+Validated lightweight experiment outputs are retained in `results/` so the A/B result can be inspected directly from the repository. These include controller CSV/log files, summary CSV/JSON, `RESULTS.md`, static plots, and animated trajectory GIFs.
 
-Create/open a Codex cloud environment for this repository with internet access enabled. For a fresh environment run:
+Large files are deliberately excluded from Git history:
+
+- PX4 `*.ulg`
+- `px4_gz.log`
+
+The large files remain available in the corresponding GitHub Actions artifact, which is uploaded before the lightweight repository copy is prepared.
+
+## Visualization outputs
+
+The analysis produces global A/B metric plots:
+
+- `results/position_rmse.png`
+- `results/attitude_rmse.png`
+- `results/rate_tracking_rmse.png`
+- `results/motor_saturation.png`
+
+Each scenario also receives a directory under `results/plots/<scenario>/` containing:
+
+- `trajectory_xy.png`
+- `trajectory_3d.png`
+- `position_tracking.png`
+- `position_error.png`
+- `attitude_error.png`
+- `body_rate_tracking.png`
+- `controller_commands.png`
+- `motor_outputs.png`
+- `trajectory.gif`
+
+The trajectory animations and static tracking plots are generated directly from the real ROS 2 controller CSV data produced during PX4 SITL. The motor-output plots and saturation metrics are derived from the PX4 ULog before the large ULog is excluded from the Git copy.
+
+## Local/cloud execution
+
+On a supported Ubuntu host, the same suite entry point used by CI is:
 
 ```bash
 bash codex/setup_environment.sh
-```
-
-Then give Codex this instruction:
-
-```text
-Read AGENTS.md and CODEX_TASK.md completely, then execute the full experiment autonomously. Do not stop after compilation or code review. Actually run PX4 v1.17 + Gazebo gz_x500 + ROS 2, debug failures, run the paired rate/torque experiments, calibrate the direct-torque normalization, and produce RESULTS.md plus quantitative files under results/.
-```
-
-For a manually prepared environment the full base suite is:
-
-```bash
 bash scripts/run_suite_native.sh
 ```
 
-## Base experiments
-
-Both control modes run the same scenarios:
-
-1. hover
-2. circle
-3. figure-8
-4. aggressive figure-8
-
-`CODEX_TASK.md` additionally asks Codex to add an identical robustness/disturbance experiment when feasible.
-
-## Main metrics
-
-- position RMSE and maximum position error
-- velocity RMSE
-- SO(3) attitude RMSE and maximum attitude error
-- body-rate tracking error
-- PX4/internal or commanded torque effort
-- motor/actuator saturation percentage
-- failure and recovery behavior
-
-## Important normalization requirement
-
-`VehicleTorqueSetpoint.xyz` is a PX4-normalized torque demand, while the Lee law naturally produces SI moments in N*m. The initial controller contains provisional scaling parameters only to make the interface explicit. **Do not use those provisional values as final experimental calibration.** Before accepting the direct-torque results, derive or empirically calibrate the N*m -> PX4 normalized torque mapping from the actual PX4 v1.17 x500 actuator effectiveness and Gazebo motor model. This requirement is enforced in `AGENTS.md` and `CODEX_TASK.md`.
-
-## Expected final deliverables
-
-Codex should leave:
-
-```text
-RESULTS.md
-results/summary.csv
-results/summary.json
-results/*.png
-results/<scenario>_<mode>/controller.csv
-results/<scenario>_<mode>/*.ulg
-results/<scenario>_<mode>/*.log
-```
-
-`RESULTS.md` must quantitatively answer how much direct Lee torque improves or degrades control performance relative to `VehicleRatesSetpoint` on PX4 v1.17, and recommend a practical implementation/update rate for real hardware.
+The GitHub Actions workflow performs the same setup and then uploads the complete result tree as an artifact. A successful same-repository PR run additionally commits the validated lightweight result set back to the PR branch with a `[skip ci]` result-only commit.
