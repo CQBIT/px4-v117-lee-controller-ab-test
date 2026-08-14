@@ -1,0 +1,3 @@
+timestamp=1786693042835212
+timestamp_sample=1786693042831212
+pose_frame=1

@@ -1,0 +1,8 @@
+[INFO] [1786693388.971520024] [lee_ab_controller]: mode=torque scenario=aggressive hz=100.0 output=/home/runner/work/px4-v117-lee-controller-ab-test/px4-v117-lee-controller-ab-test/results/aggressive_torque/controller.csv
+[INFO] [1786693389.061362682] [lee_ab_controller]: Captured initial NED yaw 1.675 rad (96.0 deg)
+[INFO] [1786693389.080842819] [lee_ab_controller]: VehicleControlMode received: armed=0 offboard=0 source_id=0
+[INFO] [1786693391.073264536] [lee_ab_controller]: VehicleCommandAck command=176 result=0 result_param1=0 result_param2=0
+[INFO] [1786693391.073342803] [lee_ab_controller]: VehicleCommandAck command=400 result=0 result_param1=0 result_param2=0
+[INFO] [1786693391.081678958] [lee_ab_controller]: PX4 confirmed ARMED + OFFBOARD; starting experiment clock
+[INFO] [1786693416.093148824] [lee_ab_controller]: VehicleCommandAck command=400 result=0 result_param1=0 result_param2=0
+[INFO] [1786693416.102245943] [lee_ab_controller]: Experiment complete
