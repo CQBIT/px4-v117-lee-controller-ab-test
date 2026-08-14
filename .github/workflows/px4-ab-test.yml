@@ -6,7 +6,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
   issues: write
 
 concurrency:
@@ -24,6 +24,11 @@ jobs:
     steps:
       - name: Checkout experiment repository
         uses: actions/checkout@v4
+        with:
+          # On pull_request, test the actual PR branch rather than a detached
+          # synthetic merge ref so the final validated lightweight results can
+          # be committed back to the same branch.
+          ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Show runner information
         run: |
@@ -55,6 +60,10 @@ jobs:
 
       - name: Run paired Lee torque vs PX4 body-rate SITL suite
         id: suite
+        env:
+          # Record the actual tested source commit in RESULTS.md. GITHUB_SHA on
+          # pull_request points to GitHub's merge-test ref, not the PR head.
+          GITHUB_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euxo pipefail
           bash scripts/run_suite_native.sh
@@ -62,15 +71,44 @@ jobs:
       - name: Re-run analysis on any available cases
         id: analysis
         if: always()
+        env:
+          GITHUB_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           mkdir -p results
           python3 scripts/analyze_results.py --root results || true
           echo '--- result files ---'
-          find results -maxdepth 2 -type f -printf '%p %s bytes\n' | sort || true
+          find results -maxdepth 3 -type f -printf '%p %s bytes\n' | sort || true
           if [[ -f results/summary.csv ]]; then
             echo '--- summary.csv ---'
             cat results/summary.csv
           fi
+
+      - name: Validate complete report and visualization set
+        id: result_validation
+        if: always()
+        run: |
+          set -euxo pipefail
+          test -s results/summary.csv
+          test -s results/summary.json
+          test -s results/RESULTS.md
+          test -s results/position_rmse.png
+          test -s results/attitude_rmse.png
+          test -s results/rate_tracking_rmse.png
+          test -s results/motor_saturation.png
+          for scenario in hover circle figure8 aggressive; do
+            for mode in rate torque; do
+              test -s "results/${scenario}_${mode}/controller.csv"
+              test -s "results/${scenario}_${mode}/controller.log"
+              find "results/${scenario}_${mode}" -maxdepth 1 -type f -name '*.ulg' -size +0c | grep -q .
+              test -s "results/${scenario}_${mode}/px4_gz.log"
+            done
+            for output in \
+              trajectory_xy.png trajectory_3d.png position_tracking.png \
+              position_error.png attitude_error.png body_rate_tracking.png \
+              controller_commands.png motor_outputs.png trajectory.gif; do
+              test -s "results/plots/${scenario}/${output}"
+            done
+          done
 
       - name: Upload PX4 logs, CSV data and plots
         if: always()
@@ -93,12 +131,13 @@ jobs:
             echo "## PX4 v1.17 Lee A/B cloud run"
             echo
             echo "- Run: [${GITHUB_RUN_ID}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})"
-            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- Tested source commit: \`${{ github.event.pull_request.head.sha || github.sha }}\`"
             echo "- Runner: Ubuntu 22.04 / ROS 2 Humble"
             echo "- setup: \`${{ steps.setup.outcome }}\`"
             echo "- preflight: \`${{ steps.preflight.outcome }}\`"
             echo "- suite: \`${{ steps.suite.outcome }}\`"
             echo "- analysis: \`${{ steps.analysis.outcome }}\`"
+            echo "- result validation: \`${{ steps.result_validation.outcome }}\`"
             echo
             if [[ -s results/summary.csv ]]; then
               echo '### summary.csv'
@@ -113,3 +152,25 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --title "PX4 A/B cloud run #${GITHUB_RUN_NUMBER}" \
             --body-file /tmp/run_issue.md
+
+      - name: Persist validated lightweight results in PR branch
+        if: ${{ success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+        env:
+          TARGET_BRANCH: ${{ github.head_ref }}
+        run: |
+          set -euxo pipefail
+          # The full artifact was uploaded above. Remove only the large files
+          # from this working tree before committing the reproducible small
+          # outputs into Git history.
+          find results -type f -name '*.ulg' -delete
+          find results -type f -name 'px4_gz.log' -delete
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add results
+          if git diff --cached --quiet; then
+            echo 'No lightweight result changes to persist.'
+            exit 0
+          fi
+          git commit -m '[skip ci] Save validated lightweight PX4 SITL results'
+          git push origin "HEAD:${TARGET_BRANCH}"
