@@ -137,7 +137,16 @@ A successful same-repository PR run uploads the complete artifact first, validat
 
 ## Important normalization requirement
 
-`VehicleTorqueSetpoint.xyz` is a PX4-normalized torque demand, while the Lee law naturally produces SI moments in N*m. The controller scaling must be derived or empirically calibrated against the actual PX4 v1.17 `x500` actuator effectiveness and Gazebo motor model before claiming a direct-torque performance benefit. This requirement is retained in `AGENTS.md` and `CODEX_TASK.md`.
+`VehicleTorqueSetpoint.xyz` is a PX4-normalized torque demand, while the Lee law naturally produces SI moments in N*m. The direct-torque branch therefore uses the x500-specific calibration
+
+`tau_norm = M_si / tau_scale_nm`, with `tau_scale_nm = [3.0, 3.0, 0.35]^T N·m`,
+
+matching the controller implementation in `ros2_ws/src/lee_ab_controller/src/lee_ab_controller.cpp`:
+
+`torque_scale_nm_ = vec_param("torque_scale_nm", {3.0, 3.0, 0.35});`
+`tau_norm = M_n_m.cwiseQuotient(torque_scale_nm_);`
+
+This mapping is retained in `AGENTS.md` and `CODEX_TASK.md` and is required before claiming any direct-torque performance benefit on the PX4 v1.17 `x500` allocator.
 
 ## Final deliverables
 

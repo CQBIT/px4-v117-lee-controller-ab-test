@@ -14,11 +14,11 @@
     "rate_tracking_rmse_rads": 0.5269031748071241,
     "direct_tau_norm_rms": 0.0,
     "thrust_norm_mean": 0.7439147399531336,
-    "ulog_count": 1,
-    "primary_ulog": "07_42_11.ulg",
-    "primary_ulog_bytes": 10602884,
-    "px4_torque_rms": 0.0673919477455296,
-    "actuator_sat_pct": 27.70083102493075
+    "ulog_count": 0,
+    "primary_ulog": "",
+    "primary_ulog_bytes": 0,
+    "px4_torque_rms": NaN,
+    "actuator_sat_pct": NaN
   },
   {
     "run": "aggressive_torque",
@@ -35,11 +35,11 @@
     "rate_tracking_rmse_rads": 0.5691969015857928,
     "direct_tau_norm_rms": 0.0945343588060799,
     "thrust_norm_mean": 0.7420945807380477,
-    "ulog_count": 1,
-    "primary_ulog": "07_43_00.ulg",
-    "primary_ulog_bytes": 9605253,
-    "px4_torque_rms": 0.1043291294242695,
-    "actuator_sat_pct": 30.985915492957744
+    "ulog_count": 0,
+    "primary_ulog": "",
+    "primary_ulog_bytes": 0,
+    "px4_torque_rms": NaN,
+    "actuator_sat_pct": NaN
   },
   {
     "run": "circle_rate",
@@ -56,11 +56,11 @@
     "rate_tracking_rmse_rads": 0.34014362246405816,
     "direct_tau_norm_rms": 0.0,
     "thrust_norm_mean": 0.7282923398289123,
-    "ulog_count": 1,
-    "primary_ulog": "07_38_55.ulg",
-    "primary_ulog_bytes": 10582488,
-    "px4_torque_rms": 0.05691397410216653,
-    "actuator_sat_pct": 25.13812154696133
+    "ulog_count": 0,
+    "primary_ulog": "",
+    "primary_ulog_bytes": 0,
+    "px4_torque_rms": NaN,
+    "actuator_sat_pct": NaN
   },
   {
     "run": "circle_torque",
@@ -77,11 +77,11 @@
     "rate_tracking_rmse_rads": 0.44422173422443817,
     "direct_tau_norm_rms": 0.06371985763535472,
     "thrust_norm_mean": 0.7276854360065446,
-    "ulog_count": 1,
-    "primary_ulog": "07_39_45.ulg",
-    "primary_ulog_bytes": 9501228,
-    "px4_torque_rms": 0.04853466526819057,
-    "actuator_sat_pct": 28.205128205128204
+    "ulog_count": 0,
+    "primary_ulog": "",
+    "primary_ulog_bytes": 0,
+    "px4_torque_rms": NaN,
+    "actuator_sat_pct": NaN
   },
   {
     "run": "figure8_rate",
@@ -98,11 +98,11 @@
     "rate_tracking_rmse_rads": 0.48609327039915917,
     "direct_tau_norm_rms": 0.0,
     "thrust_norm_mean": 0.7295219555521909,
-    "ulog_count": 1,
-    "primary_ulog": "07_40_34.ulg",
-    "primary_ulog_bytes": 10286761,
-    "px4_torque_rms": 0.08995737278157545,
-    "actuator_sat_pct": 21.714285714285715
+    "ulog_count": 0,
+    "primary_ulog": "",
+    "primary_ulog_bytes": 0,
+    "px4_torque_rms": NaN,
+    "actuator_sat_pct": NaN
   },
   {
     "run": "figure8_torque",
@@ -119,11 +119,11 @@
     "rate_tracking_rmse_rads": 2.195019547859054,
     "direct_tau_norm_rms": 0.31100990552566227,
     "thrust_norm_mean": 0.6950051554772474,
-    "ulog_count": 1,
-    "primary_ulog": "07_41_22.ulg",
-    "primary_ulog_bytes": 9201813,
-    "px4_torque_rms": 0.27819849750462233,
-    "actuator_sat_pct": 51.42857142857142
+    "ulog_count": 0,
+    "primary_ulog": "",
+    "primary_ulog_bytes": 0,
+    "px4_torque_rms": NaN,
+    "actuator_sat_pct": NaN
   },
   {
     "run": "hover_rate",
@@ -140,11 +140,11 @@
     "rate_tracking_rmse_rads": 0.00630379170899223,
     "direct_tau_norm_rms": 0.0,
     "thrust_norm_mean": 0.7283688556347199,
-    "ulog_count": 1,
-    "primary_ulog": "07_37_14.ulg",
-    "primary_ulog_bytes": 10766637,
-    "px4_torque_rms": 0.007695900074195833,
-    "actuator_sat_pct": 28.532608695652172
+    "ulog_count": 0,
+    "primary_ulog": "",
+    "primary_ulog_bytes": 0,
+    "px4_torque_rms": NaN,
+    "actuator_sat_pct": NaN
   },
   {
     "run": "hover_torque",
@@ -161,10 +161,10 @@
     "rate_tracking_rmse_rads": 0.007298607908938387,
     "direct_tau_norm_rms": 0.0012214705708630295,
     "thrust_norm_mean": 0.7282586645126525,
-    "ulog_count": 1,
-    "primary_ulog": "07_38_04.ulg",
-    "primary_ulog_bytes": 10007349,
-    "px4_torque_rms": 0.008840262381764715,
-    "actuator_sat_pct": 31.978319783197833
+    "ulog_count": 0,
+    "primary_ulog": "",
+    "primary_ulog_bytes": 0,
+    "px4_torque_rms": NaN,
+    "actuator_sat_pct": NaN
   }
 ]
