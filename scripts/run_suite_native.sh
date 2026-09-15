@@ -63,3 +63,47 @@ PY
   done
 done
 python3 scripts/analyze_results.py --root results
+
+# Do not let a successful-looking controller loop or a partial analyzer output
+# be mistaken for a complete experiment.  The native suite owns this contract;
+# the workflow can then upload only a validated result set.
+python3 - "$DURATION" <<'PY'
+import csv
+import math
+import pathlib
+import sys
+
+root = pathlib.Path("results")
+duration = float(sys.argv[1])
+scenarios = ("hover", "circle", "figure8", "aggressive")
+modes = ("rate", "torque")
+expected = {(scenario, mode) for scenario in scenarios for mode in modes}
+
+with (root / "summary.csv").open(newline="") as stream:
+    rows = list(csv.DictReader(stream))
+if len(rows) != len(expected):
+    raise SystemExit(f"summary.csv has {len(rows)} rows; expected {len(expected)}")
+actual = {(row["scenario"], row["mode"]) for row in rows}
+if actual != expected:
+    raise SystemExit(f"summary.csv case set mismatch: {sorted(actual ^ expected)}")
+if not (root / "RESULTS.md").is_file() or not (root / "RESULTS.md").stat().st_size:
+    raise SystemExit("results/RESULTS.md is missing or empty")
+
+for scenario, mode in sorted(expected):
+    case = root / f"{scenario}_{mode}"
+    csv_path = case / "controller.csv"
+    with csv_path.open(newline="") as stream:
+        samples = list(csv.DictReader(stream))
+    flight_times = [
+        float(row["flight_t"]) for row in samples
+        if row.get("flight_t") and math.isfinite(float(row["flight_t"]))
+    ]
+    if not flight_times or max(flight_times) < duration:
+        raise SystemExit(f"{case}: controller telemetry did not reach {duration:g}s")
+    for required in ("controller.log", "px4_gz.log"):
+        path = case / required
+        if not path.is_file() or not path.stat().st_size:
+            raise SystemExit(f"{case}: missing non-empty {required}")
+    if not any(path.is_file() and path.stat().st_size for path in case.glob("*.ulg")):
+        raise SystemExit(f"{case}: missing non-empty PX4 ULog")
+PY

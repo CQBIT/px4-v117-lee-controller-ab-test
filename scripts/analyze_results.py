@@ -498,8 +498,16 @@ def analyze(root: Path):
     found = {(str(r.scenario), str(r.mode)) for r in out.itertuples()}
     missing = sorted(expected - found)
     extra = sorted(found - expected)
-    if missing or extra:
-        raise SystemExit(f"Unexpected case set: missing={missing}, extra={extra}")
+    if missing or extra or len(out) != len(expected):
+        raise SystemExit(
+            f"Unexpected case set: rows={len(out)}, missing={missing}, extra={extra}"
+        )
+    if out.duplicated(["scenario", "mode"]).any():
+        duplicates = out[out.duplicated(["scenario", "mode"], keep=False)]
+        raise SystemExit(
+            "Duplicate scenario/mode rows: "
+            + ", ".join(duplicates["run"].astype(str))
+        )
     bad = out[(~out["armed_offboard_confirmed"])]
     if not bad.empty:
         raise SystemExit("Real-SITL validation failed for: " + ", ".join(bad["run"].astype(str)))
