@@ -450,16 +450,30 @@ The complete GitHub Actions artifact additionally contains the large PX4 ULogs a
 
 
 def analyze(root: Path):
+    if not root.is_dir():
+        raise SystemExit(f"Results directory does not exist: {root}")
+
+    expected = {(s, m) for s in SCENARIOS for m in MODES}
     rows = []
-    for d in sorted(root.iterdir()):
-        if not d.is_dir() or d.name == "plots":
-            continue
+    for scenario, mode in sorted(expected):
+        d = root / f"{scenario}_{mode}"
         csv_path = d / "controller.csv"
         if not csv_path.exists():
-            continue
+            raise SystemExit(f"Missing required controller telemetry: {csv_path}")
         df = pd.read_csv(csv_path)
         if df.empty:
-            continue
+            raise SystemExit(f"Empty required controller telemetry: {csv_path}")
+        required_columns = {
+            "flight_t", "mode", "scenario", "x", "y", "z", "xd", "yd", "zd",
+            "vx", "vy", "vz", "vxd", "vyd", "vzd", "wx", "wy", "wz",
+            "wspx", "wspy", "wspz", "att_err_deg", "thrust_norm",
+            "taux_norm", "tauy_norm", "tauz_norm",
+        }
+        missing_columns = sorted(required_columns - set(df.columns))
+        if missing_columns:
+            raise SystemExit(
+                f"{csv_path} is missing required columns: {', '.join(missing_columns)}"
+            )
         use = df[(df.flight_t >= 6.0) & (df.flight_t <= max(6.0, df.flight_t.max() - 1.0))].copy()
         if len(use) < 10:
             use = df.copy()
@@ -494,7 +508,6 @@ def analyze(root: Path):
         raise SystemExit("No controller.csv files found")
 
     out = pd.DataFrame(rows).sort_values(["scenario", "mode"])
-    expected = {(s, m) for s in SCENARIOS for m in MODES}
     found = {(str(r.scenario), str(r.mode)) for r in out.itertuples()}
     missing = sorted(expected - found)
     extra = sorted(found - expected)
