@@ -440,6 +440,22 @@ Per-scenario figures and animations generated directly from the real controller 
 
 For this controller tuning and `x500` SITL setup, direct torque does **not** produce a clear position-tracking advantage over the PX4 body-rate path. The direct-torque path has higher mean attitude error and higher mean body-rate tracking error. The ULog-derived motor saturation metric is the strongest actuator-level warning signal; materially higher saturation for direct torque indicates that torque normalization/allocation tuning should be improved before claiming a direct-torque benefit.
 
+## Failures and hardware update-rate recommendation
+
+The eight cases are considered valid only when the controller log confirms
+`ARMED + OFFBOARD`, the requested flight duration is reached, and a non-empty
+PX4 ULog is collected. Any case that does not meet one of those conditions is
+failed by the native runner and is not included as a result row. A `failsafe`
+flag in controller telemetry is also treated as an in-flight failure by the
+runner rather than being silently converted into a successful result.
+
+The controller and both A/B interfaces ran at 100 Hz. Because the direct-torque
+law differentiates the desired body rate to obtain `dot(Omega_d)`, the minimum
+hardware recommendation is a deterministic **100 Hz** update with timestamped
+state, and preferably 200 Hz if the transport and flight computer permit it.
+Operation below 100 Hz requires a separately paired rate-sweep experiment; it
+must not be inferred from these four cases.
+
 The complete GitHub Actions artifact additionally contains the large PX4 ULogs and PX4/Gazebo logs that are intentionally excluded from Git history.
 """
     report_paths = [root / "RESULTS.md"]

@@ -230,7 +230,12 @@ STATUS=$?
 set -e
 sleep 2
 
-find "$PX4_DIR/build/px4_sitl_default/rootfs/log" -type f -name '*.ulg' -print -exec cp -f {} "$RUN_DIR/" \; 2>/dev/null || true
+# PX4 SITL's logger path is generated inside the simulated filesystem and has
+# changed between PX4 releases (rootfs/log versus rootfs/fs/microsd/log).
+# Search the complete v1.17 build tree so a successful controller run cannot
+# silently lose its firmware evidence.
+find "$PX4_DIR/build/px4_sitl_default" -type f -name '*.ulg' -size +0c \
+  -print -exec cp -f {} "$RUN_DIR/" \; 2>/dev/null || true
 
 if [[ ! -s "$RUN_DIR/controller.csv" ]]; then
   echo "controller.csv missing/empty" >&2
@@ -244,6 +249,20 @@ if [[ $CSV_LINES -lt 50 ]]; then
   echo "controller.csv has only $CSV_LINES lines; real SITL controller data is incomplete" >&2
   tail -n 160 "$RUN_DIR/controller.log" >&2 || true
   exit 22
+fi
+
+if ! find "$RUN_DIR" -maxdepth 1 -type f -name '*.ulg' -size +0c | grep -q .; then
+  echo "No non-empty PX4 ULog was collected for ${MODE}/${SCENARIO}" >&2
+  echo "--- PX4/Gazebo log tail ---" >&2
+  tail -n 160 "$RUN_DIR/px4_gz.log" >&2 || true
+  echo "--- candidate ULogs under PX4 build ---" >&2
+  find "$PX4_DIR/build/px4_sitl_default" -type f -name '*.ulg' -printf '%p %s bytes\n' 2>/dev/null || true
+  exit 23
+fi
+
+if [[ ! -s "$RUN_DIR/px4_gz.log" ]]; then
+  echo "PX4/Gazebo log is missing or empty for ${MODE}/${SCENARIO}" >&2
+  exit 24
 fi
 
 if [[ $STATUS -ne 0 ]]; then
