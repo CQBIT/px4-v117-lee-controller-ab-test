@@ -543,9 +543,9 @@ def analyze(root: Path):
 
     missing_ulog = out[out["ulog_count"] < 1]
     if not missing_ulog.empty:
-        print(
-            "Warning: lightweight repo result set has no non-empty ULog files; "
-            "full PX4 artifact validation will still require them in the GitHub Actions run."
+        raise SystemExit(
+            "Real-SITL validation failed: missing non-empty PX4 ULog for "
+            + ", ".join(missing_ulog["run"].astype(str))
         )
 
     out.to_csv(root / "summary.csv", index=False)

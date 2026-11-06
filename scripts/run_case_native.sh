@@ -230,6 +230,25 @@ STATUS=$?
 set -e
 sleep 2
 
+# PX4's logger closes the ULog when the SITL process exits.  Collecting before
+# that happens races the logger and can make a fully flown case look like it
+# has no firmware artifact.  Stop the PX4 launcher before searching for ULogs,
+# while retaining the logs for failed controller runs as well.
+if [[ -n "${PX4_PID:-}" ]] && kill -0 "$PX4_PID" 2>/dev/null; then
+  kill -INT "$PX4_PID" 2>/dev/null || true
+  for _ in $(seq 1 10); do
+    if ! kill -0 "$PX4_PID" 2>/dev/null; then
+      break
+    fi
+    sleep 1
+  done
+  if kill -0 "$PX4_PID" 2>/dev/null; then
+    kill -TERM "$PX4_PID" 2>/dev/null || true
+  fi
+  wait "$PX4_PID" 2>/dev/null || true
+  PX4_PID=
+fi
+
 # PX4 SITL's logger path is generated inside the simulated filesystem and has
 # changed between PX4 releases (rootfs/log versus rootfs/fs/microsd/log).
 # Search the complete v1.17 build tree so a successful controller run cannot
