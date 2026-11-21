@@ -256,6 +256,20 @@ fi
 find "$PX4_DIR/build/px4_sitl_default" -type f -name '*.ulg' -size +0c \
   -print -exec cp -f {} "$RUN_DIR/" \; 2>/dev/null || true
 
+# Logger shutdown can take a few seconds after the launcher process exits.
+# Keep a short bounded retry here so the firmware evidence is not lost because
+# of a filesystem flush race.
+if ! find "$RUN_DIR" -maxdepth 1 -type f -name '*.ulg' -size +0c | grep -q .; then
+  for _ in $(seq 1 10); do
+    sleep 1
+    find "$PX4_DIR/build/px4_sitl_default" -type f -name '*.ulg' -size +0c \
+      -exec cp -f {} "$RUN_DIR/" \; 2>/dev/null || true
+    if find "$RUN_DIR" -maxdepth 1 -type f -name '*.ulg' -size +0c | grep -q .; then
+      break
+    fi
+  done
+fi
+
 if [[ ! -s "$RUN_DIR/controller.csv" ]]; then
   echo "controller.csv missing/empty" >&2
   tail -n 160 "$RUN_DIR/controller.log" >&2 || true
