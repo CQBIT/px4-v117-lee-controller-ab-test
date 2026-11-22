@@ -1,8 +1,6 @@
 name: PX4 A-B AI Repair Loop
 
 on:
-  schedule:
-    - cron: '*/15 * * * *'
   workflow_dispatch:
   push:
     paths:
