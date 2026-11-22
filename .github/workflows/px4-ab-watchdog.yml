@@ -1,8 +1,6 @@
 name: PX4 A-B 15min Watchdog
 
 on:
-  schedule:
-    - cron: '*/15 * * * *'
   workflow_dispatch:
 
 permissions:
